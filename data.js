@@ -4,7 +4,12 @@
 export const ZONE_SIZE = 240;          // zona kvadrati tomoni, metr
 export const HALF = ZONE_SIZE / 2;
 export const MAX_OBJECTS = 800;
-export const KEYS = { settings: 'dexo-gta:settings', zone: 'dexo-gta:zone' };
+export const KEYS = {
+  settings: 'dexo-gta:settings',
+  zone: 'dexo-gta:zone',        // faqat egasining editoridagi qoralama
+  car: 'dexo-gta:car',          // tanlangan mashina nomi
+  github: 'dexo-gta:github',    // faqat egasining qurilmasida (editor)
+};
 
 export const DEFAULT_SETTINGS = {
   quality: 'medium',     // low | medium | high
@@ -39,6 +44,55 @@ export function loadZone() {
 export function saveZone(zone) { return writeJSON(KEYS.zone, zone); }
 export function clearZone() {
   try { localStorage.removeItem(KEYS.zone); } catch { /* xotira yopiq */ }
+}
+
+// ---------- Umumiy zona (hamma o'yinchilar uchun): zone.json ----------
+export async function fetchSharedZone() {
+  try {
+    const res = await fetch('zone.json', { cache: 'no-store' });
+    if (!res.ok) return null;
+    const zone = await res.json();
+    return isValidZone(zone) ? zone : null;
+  } catch { return null; }
+}
+
+// ---------- Mashinalar: car.txt ----------
+// Format (har bir mashina "name:" qatoridan boshlanadi):
+//   name: bmw
+//   car: bmwM5.glb
+// Ixtiyoriy: rotate: 180 (model teskari yuklansa), length: 4.6 (metr)
+export function parseCarList(text) {
+  const cars = [];
+  let cur = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^([A-Za-z_]+)\s*:\s*(.+)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const val = m[2].trim();
+    if (key === 'name') { cur = { name: val, file: '', rotate: 0, length: 4.6 }; cars.push(cur); }
+    else if (!cur) continue;
+    else if (key === 'car') cur.file = val;
+    else if (key === 'rotate') cur.rotate = Number(val) || 0;
+    else if (key === 'length') cur.length = Number(val) > 0 ? Number(val) : 4.6;
+  }
+  return cars.filter((c) => c.name && c.file);
+}
+export async function fetchCarList() {
+  try {
+    const res = await fetch('car.txt', { cache: 'no-store' });
+    if (!res.ok) return [];
+    return parseCarList(await res.text());
+  } catch { return []; }
+}
+
+// Tanlangan mashina: faqat nomi saqlanadi, qolganini car.txt beradi
+export function loadSelectedCarName() {
+  try { return localStorage.getItem(KEYS.car) || ''; } catch { return ''; }
+}
+export function saveSelectedCarName(name) {
+  try { localStorage.setItem(KEYS.car, name); return true; } catch { return false; }
 }
 
 // ---------- Katalog ----------

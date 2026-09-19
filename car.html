@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1b1f27">
+  <title>Mashina tanlash | DEXO GTA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="car.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <header class="bar">
+    <a class="bar-btn" href="index.html">Orqaga</a>
+    <h1>Mashina tanlash</h1>
+  </header>
+
+  <section class="dock" aria-label="Mashinalar">
+    <div class="info">
+      <h2 id="carName">Yuklanmoqda…</h2>
+      <p class="state" id="carState" role="status" aria-live="polite"></p>
+    </div>
+    <div class="list" id="list" role="listbox" aria-label="Mashinalar ro‘yxati"></div>
+    <button class="btn btn--primary" type="button" id="pick" disabled>Tanlash</button>
+  </section>
+
+  <div class="loading" id="loading" hidden>
+    <p id="loadingText">Mashina yuklanmoqda…</p>
+    <div class="bar-track"><div class="bar-fill" id="loadingBar"></div></div>
+  </div>
+
+  <script type="module" src="car.js"></script>
+</body>
+</html>

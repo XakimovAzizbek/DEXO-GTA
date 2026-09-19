@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS,
-  loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone,
+  CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS, KEYS,
+  loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
 } from './data.js';
 import { getGeometry, getMaterial, loadCity } from './models.js';
@@ -97,12 +97,12 @@ const snapV = (v) => (snapSize > 0 ? Math.round(v / snapSize) * snapSize : v);
 const getEntry = (id) => entries.find((e) => e.id === id) || null;
 
 let toastTimer = 0;
-function toast(text) {
+function toast(text, ms = 2000) {
   const el = $('toast');
   el.textContent = text;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 2000);
+  toastTimer = setTimeout(() => { el.hidden = true; }, ms);
 }
 
 function currentZone() {
@@ -458,11 +458,106 @@ $('importFile').addEventListener('change', async (e) => {
   }
 });
 
-$('save').addEventListener('click', () => saveNow(true));
 $('play').addEventListener('click', () => saveNow(false));
 
+// ---------- Umumiy zonani GitHub'ga saqlash (faqat token egasi yoza oladi) ----------
+function loadGithub() {
+  try { return JSON.parse(localStorage.getItem(KEYS.github)) || {}; } catch { return {}; }
+}
+function readGithubFields() {
+  return {
+    owner: $('ghOwner').value.trim(),
+    repo: $('ghRepo').value.trim(),
+    branch: $('ghBranch').value.trim() || 'main',
+    token: $('ghToken').value.trim(),
+  };
+}
+function storeGithub(cfg) {
+  try { localStorage.setItem(KEYS.github, JSON.stringify(cfg)); return true; } catch { return false; }
+}
+{
+  const cfg = loadGithub();
+  $('ghOwner').value = cfg.owner || '';
+  $('ghRepo').value = cfg.repo || '';
+  $('ghBranch').value = cfg.branch || 'main';
+  $('ghToken').value = cfg.token || '';
+}
+$('ghSave').addEventListener('click', () => {
+  toast(storeGithub(readGithubFields()) ? 'Ulanish saqlandi' : 'Saqlab bo‘lmadi: brauzer xotirasi yopiq');
+});
+
+function toBase64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function ghError(status) {
+  if (status === 401) return 'Token noto‘g‘ri yoki muddati tugagan';
+  if (status === 403 || status === 404) return 'Ombor nomi yoki token ruxsati noto‘g‘ri (Contents: Read and write kerak)';
+  return `GitHub xatosi (${status})`;
+}
+
+let publishing = false;
+async function publishZone() {
+  const cfg = loadGithub();
+  if (!cfg.owner || !cfg.repo || !cfg.token) {
+    sheet.hidden = false;
+    toast('Avval GitHub ulanishini to‘ldiring va “Ulanishni saqlash” ni bosing', 3500);
+    return;
+  }
+  if (publishing) return;
+  publishing = true;
+  toast('Serverga yuborilmoqda…', 10000);
+  try {
+    const api = `https://api.github.com/repos/${encodeURIComponent(cfg.owner)}/${encodeURIComponent(cfg.repo)}/contents/zone.json`;
+    const headers = {
+      Authorization: `Bearer ${cfg.token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    const content = toBase64(JSON.stringify(currentZone()));
+    let lastStatus = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let sha;
+      const head = await fetch(`${api}?ref=${encodeURIComponent(cfg.branch)}`, { headers, cache: 'no-store' });
+      if (head.ok) sha = (await head.json()).sha;
+      else if (head.status !== 404) throw Object.assign(new Error('get'), { status: head.status });
+      const put = await fetch(api, {
+        method: 'PUT',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'Zona yangilandi', content, branch: cfg.branch, ...(sha ? { sha } : {}) }),
+      });
+      if (put.ok) { toast('Saqlandi. O‘yinchilarga 1-2 daqiqada ko‘rinadi', 3500); return; }
+      lastStatus = put.status;
+      if (put.status !== 409 && put.status !== 422) break;   // sha eskirgan bo'lsa bir marta qayta urinamiz
+    }
+    throw Object.assign(new Error('put'), { status: lastStatus });
+  } catch (err) {
+    toast(err.status ? ghError(err.status) : 'Internet yo‘q yoki GitHub bilan aloqa uzildi', 4000);
+  } finally {
+    publishing = false;
+  }
+}
+
+$('save').addEventListener('click', () => {
+  saveNow(false);
+  publishZone();
+});
+
+$('pull').addEventListener('click', async () => {
+  const zone = await fetchSharedZone();
+  if (!zone) { toast('Serverda zone.json topilmadi'); return; }
+  if (!confirm('Hozirgi zona serverdagi zona bilan almashtiriladi. Davom etasizmi?')) return;
+  pushUndo();
+  replaceAll(zone.objects);
+  scheduleSave();
+  sheet.hidden = true;
+  toast('Serverdagi zona yuklandi');
+});
+
 // ---------- Ishga tushirish ----------
-const startZone = loadZone() || defaultZone();
+const startZone = loadZone() || (await fetchSharedZone()) || defaultZone();
 for (const o of startZone.objects) addEntry(normalizeObject(o));
 updateStatus();
 updateSelInfo();

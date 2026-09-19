@@ -3,6 +3,7 @@
 // shuning uchun o'yinda InstancedMesh orqali juda tez chiziladi.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CATALOG, TINTS } from './data.js';
 
 export const CITY_URL = 'assets/procedural_city_6.glb';
@@ -222,4 +223,91 @@ export async function loadCity(onProgress) {
   const center = bounds.getCenter(new THREE.Vector3());
   root.position.set(-center.x, -bounds.min.y, -center.z);   // markazga qo'yamiz, eng pastki nuqta y=0 da
   return root;
+}
+
+// ---------- Haqiqiy mashina (GLB) ----------
+// Metall bo'yoq to'g'ri ko'rinishi uchun yorug'lik muhiti (faqat PBR materiallarga ta'sir qiladi).
+export function makeEnvironment(renderer) {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+  return texture;
+}
+
+async function makeGLTFLoader() {
+  const [{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/loaders/DRACOLoader.js'),
+    import('three/addons/libs/meshopt_decoder.module.js'),
+  ]);
+  const loader = new GLTFLoader();
+  const draco = new DRACOLoader();
+  draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+  loader.setDRACOLoader(draco);
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  return loader;
+}
+
+// car = { name, file, rotate, length } (car.txt dan). Fayl avval cars/ papkasidan, keyin asosiy papkadan qidiriladi.
+// Natija: uzunligi car.length metr, markazi (0,0) da, g'ildiraklari y=0 da, old tomoni +z ga qaragan guruh.
+export async function loadCarModel(car, onProgress) {
+  const loader = await makeGLTFLoader();
+  let gltf = null, lastError = null;
+  for (const path of [`cars/${car.file}`, car.file]) {
+    try {
+      gltf = await loader.loadAsync(path, (e) => {
+        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+      });
+      break;
+    } catch (err) { lastError = err; }
+  }
+  if (!gltf) throw lastError || new Error('Mashina fayli topilmadi');
+
+  const model = gltf.scene;
+  model.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.castShadow = true;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const m of mats) {
+      if (!m) continue;
+      if (m.transmission > 0) {          // shisha (transmission) juda qimmat: oddiy shaffoflik
+        m.transmission = 0;
+        m.transparent = true;
+        m.opacity = Math.min(m.opacity, 0.4);
+      }
+      if (m.isMeshStandardMaterial) m.envMapIntensity = 1;
+    }
+  });
+
+  const inner = new THREE.Group();
+  inner.add(model);
+  const raw = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+  // Uzun tomonni z o'qiga to'g'rilaymiz; rotate: 180 bo'lsa old va orqa almashadi
+  inner.rotation.y = (raw.x > raw.z ? Math.PI / 2 : 0) + THREE.MathUtils.degToRad(car.rotate || 0);
+
+  const root = new THREE.Group();
+  root.add(inner);
+  root.updateMatrixWorld(true);
+  let box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3());
+  inner.scale.setScalar((car.length || 4.6) / Math.max(size.z, 0.001));
+  root.updateMatrixWorld(true);
+  box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  inner.position.set(-center.x, -box.min.y, -center.z);
+  return root;
+}
+
+// Modelni xotiradan tozalash (mashina almashtirilganda)
+export function disposeModel(root) {
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.geometry?.dispose();
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const m of mats) {
+      if (!m) continue;
+      for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
+      m.dispose();
+    }
+  });
 }

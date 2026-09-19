@@ -1,0 +1,2 @@
+name: KIA K5
+car: kia_k5.glb

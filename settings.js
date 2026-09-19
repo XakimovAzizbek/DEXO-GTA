@@ -1,4 +1,4 @@
-import { loadSettings, saveSettings, clearZone, DEFAULT_SETTINGS } from './data.js';
+import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './data.js';
 
 let settings = loadSettings();
 const saved = document.getElementById('saved');
@@ -46,13 +46,6 @@ document.getElementById('resetSettings').addEventListener('click', () => {
   settings = { ...DEFAULT_SETTINGS };
   render();
   commit();
-});
-
-document.getElementById('clearZone').addEventListener('click', () => {
-  if (confirm('Saqlangan zona o‘chiriladi. O‘yin tayyor namuna zonaga qaytadi. Davom etasizmi?')) {
-    clearZone();
-    flash('Zona o‘chirildi');
-  }
 });
 
 render();

@@ -1,13 +1,17 @@
 import * as THREE from 'three';
 import {
   CATALOG, HALF, ZONE_SIZE, loadSettings, loadZone, defaultZone, normalizeObject,
-  makeCollider, collideCircle,
+  makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
 } from './data.js';
-import { getGeometry, getMaterial, tintColor, loadCity } from './models.js';
+import {
+  getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
+} from './models.js';
 
 const $ = (id) => document.getElementById(id);
 const settings = loadSettings();
-const zone = loadZone() || defaultZone();
+// Hamma o'yinchilar egasi qurgan zone.json da o'ynaydi. ?draft=1 faqat egasining qoralamasini sinash uchun.
+const useDraft = new URLSearchParams(location.search).has('draft');
+const zone = (useDraft ? loadZone() : null) || (await fetchSharedZone()) || defaultZone();
 const objects = zone.objects.map(normalizeObject);
 
 // ---------- Renderer ----------
@@ -30,6 +34,8 @@ const scene = new THREE.Scene();
 const SKY = '#a9d0ea';
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 90, 340);
+
+scene.environment = makeEnvironment(renderer);   // faqat PBR (mashina) materiallariga ta'sir qiladi
 
 const camera = new THREE.PerspectiveCamera(60, 1, 0.3, 700);
 
@@ -145,8 +151,39 @@ function buildCar() {
   }
   return { group, wheels, frontPivots: pivots };
 }
-const carModel = buildCar();
-scene.add(carModel.group);
+// carRoot: joyi va yo'nalishi; carTilt: engashish (tormozda old tomon cho'kadi, burilishda yon tomonga egiladi)
+const carRoot = new THREE.Group();
+const carTilt = new THREE.Group();
+carRoot.add(carTilt);
+scene.add(carRoot);
+let carModel = { wheels: [], frontPivots: [] };
+
+function useFallbackCar() {
+  const built = buildCar();
+  carTilt.add(built.group);
+  carModel = built;
+}
+
+// Tanlangan mashina (car.txt dagi nom bo'yicha). Topilmasa birinchi mashina, u ham bo'lmasa oddiy quti mashina.
+async function setupCar(setText, setProgress) {
+  const cars = await fetchCarList();
+  const wanted = loadSelectedCarName();
+  const entry = cars.find((c) => c.name === wanted) || cars[0] || null;
+  if (entry) {
+    setText(`Mashina yuklanmoqda: ${entry.name}…`);
+    try {
+      const model = await loadCarModel(entry, setProgress);
+      model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
+      carTilt.add(model);
+      return;
+    } catch (err) {
+      console.warn('Mashina modeli yuklanmadi:', err);
+      setText('Mashina fayli topilmadi. Oddiy mashina bilan davom etamiz.');
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  useFallbackCar();
+}
 
 // ---------- Mashina holati va fizikasi ----------
 const spawn = objects.find((o) => o.t === 'spawn') || { x: 0, z: 0, r: 0 };
@@ -370,6 +407,7 @@ const speedEl = $('speedValue');
 const fpsEl = $('fps');
 fpsEl.hidden = !settings.showFps;
 let last = performance.now(), fpsAcc = 0, fpsFrames = 0, shownSpeed = -1;
+let prevVf = 0, tiltPitch = 0, tiltRoll = 0;
 
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -381,8 +419,16 @@ function frame(now) {
 
     const speed = Math.hypot(car.vx, car.vz);
     const vf = car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h);
-    carModel.group.position.set(car.x, 0, car.z);
-    carModel.group.rotation.y = car.h;
+    carRoot.position.set(car.x, 0, car.z);
+    carRoot.rotation.y = car.h;
+
+    const acc = (vf - prevVf) / Math.max(dt, 0.001);
+    prevVf = vf;
+    const ease = Math.min(1, dt * 6);
+    tiltPitch += (clamp(-acc * 0.0035, -0.05, 0.05) - tiltPitch) * ease;
+    tiltRoll += (clamp(-car.steer * clamp(Math.abs(vf) / 20, 0, 1) * 0.05, -0.05, 0.05) - tiltRoll) * ease;
+    carTilt.rotation.set(tiltPitch, 0, tiltRoll);
+
     for (const w of carModel.wheels) w.rotation.x += (vf * dt) / 0.38;
     for (const p of carModel.frontPivots) p.rotation.y = -car.steer * 0.5;
 
@@ -406,6 +452,10 @@ function frame(now) {
 // ---------- Ishga tushirish ----------
 async function start() {
   const loadingText = $('loadingText'), bar = $('loadingBar');
+  await setupCar(
+    (text) => { loadingText.textContent = text; },
+    (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
+  );
   respawn();
 
   if (settings.useCityModel) {

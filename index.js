@@ -1,11 +1,8 @@
-import { loadZone } from './data.js';
+import { loadSelectedCarName } from './data.js';
 
 const status = document.getElementById('status');
-const zone = loadZone();
+const car = loadSelectedCarName();
 
-if (zone) {
-  const count = zone.objects.filter(o => o.t !== 'spawn').length;
-  status.textContent = `Saqlangan zonada ${count} ta obyekt bor.`;
-} else {
-  status.textContent = 'Zona hali qurilmagan. O‘yin tayyor namuna zonada ochiladi.';
-}
+status.textContent = car
+  ? `Tanlangan mashina: ${car}`
+  : 'Mashina tanlanmagan. O‘yin ro‘yxatdagi birinchi mashina bilan ochiladi.';

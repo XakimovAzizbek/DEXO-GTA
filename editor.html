@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1b1f27">
   <title>Zona qurish | DEXO GTA</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,7 +29,7 @@
     <div class="bar-actions">
       <button class="bar-btn" type="button" id="undo" disabled>Qaytarish</button>
       <button class="bar-btn" type="button" id="save">Saqlash</button>
-      <a class="bar-btn bar-btn--hazard" href="game.html" id="play">O‘ynash</a>
+      <a class="bar-btn bar-btn--hazard" href="game.html?draft=1" id="play">O‘ynash</a>
     </div>
   </header>
   <p class="count" id="count"></p>
@@ -87,6 +88,19 @@
         <div class="inline">
           <input id="treeCount" type="number" inputmode="numeric" min="1" max="200" value="40">
           <button type="button" class="mini" id="plant">Ekish</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">Umumiy zonani saqlash (GitHub)</span>
+        <p class="note">“Saqlash” tugmasi zonani zone.json fayli sifatida GitHub omboringizga yozadi. Hamma o‘yinchilar shu zonada o‘ynaydi. Token faqat shu qurilmada saqlanadi.</p>
+        <input id="ghOwner" type="text" placeholder="GitHub foydalanuvchi nomi" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <input id="ghRepo" type="text" placeholder="Ombor (repo) nomi" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <input id="ghBranch" type="text" placeholder="Branch (odatda main)" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <input id="ghToken" type="password" placeholder="Token (github_pat_...)" autocomplete="off" spellcheck="false">
+        <div class="inline">
+          <button type="button" class="mini" id="ghSave">Ulanishni saqlash</button>
+          <button type="button" class="mini" id="pull">Serverdan yuklash</button>
         </div>
       </div>
 

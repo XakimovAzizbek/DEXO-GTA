@@ -109,6 +109,12 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
   background: var(--asphalt); color: var(--paint); font: inherit;
 }
 .field input[type="number"] { width: 110px; }
+.field input[type="text"], .field input[type="password"] {
+  min-height: 46px; padding: 0 12px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: var(--asphalt); color: var(--paint); font: inherit; width: 100%;
+}
+.field .note { color: var(--kerb); font-size: 14px; line-height: 1.35; }
 .sheet .btn { min-height: 52px; font-size: 24px; }
 
 /* Xabar va yuklanish */
