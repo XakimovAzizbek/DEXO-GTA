@@ -1,0 +1,137 @@
+html, body { overflow: hidden; overscroll-behavior: none; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.fatal { padding: 24px; color: #ff8f82; }
+
+/* Yuqori panel */
+.bar {
+  position: fixed; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left));
+  background: rgba(27, 31, 39, 0.92);
+  border-bottom: 1px solid var(--asphalt-line);
+}
+.bar h1 { font-family: var(--display); font-weight: 800; font-size: 24px; line-height: 1; margin-right: auto; white-space: nowrap; }
+.bar-actions { display: flex; gap: 6px; }
+.bar-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 40px; padding: 0 12px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: transparent; color: var(--paint);
+  font-weight: 600; font-size: 15px; text-decoration: none; white-space: nowrap;
+}
+.bar-btn:disabled { opacity: 0.4; }
+.bar-btn--hazard { background: var(--hazard); border-color: var(--hazard); color: #14171d; }
+
+.count {
+  position: fixed;
+  top: calc(max(8px, env(safe-area-inset-top)) + 58px);
+  left: max(10px, env(safe-area-inset-left));
+  padding: 3px 10px;
+  background: rgba(27, 31, 39, 0.78);
+  border-radius: 8px;
+  font-size: 14px; font-weight: 600;
+  pointer-events: none;
+}
+
+/* Pastki asboblar paneli */
+.dock {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  padding: 8px max(10px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  background: rgba(27, 31, 39, 0.96);
+  border-top: 1px solid var(--asphalt-line);
+}
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.tabs button {
+  min-height: 44px; padding: 0 6px;
+  border: 2px solid var(--asphalt-line); border-radius: 10px;
+  background: var(--asphalt-raise); font-weight: 600;
+}
+.tabs button.is-active { background: var(--hazard); border-color: var(--hazard); color: #14171d; }
+
+.panel { margin-top: 8px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hint { color: var(--kerb); font-size: 14px; line-height: 1.35; }
+
+.palette {
+  display: flex; gap: 8px; align-items: stretch;
+  margin-top: 8px; padding-bottom: 4px;
+  overflow-x: auto; scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.group-label {
+  flex: none; align-self: center; padding: 0 2px 0 8px;
+  color: var(--kerb); font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.chip {
+  flex: none; scroll-snap-align: start;
+  display: grid; justify-items: center; gap: 4px;
+  min-width: 92px; padding: 8px 10px;
+  border: 2px solid var(--asphalt-line); border-radius: 12px;
+  background: var(--asphalt-raise);
+  font-size: 13px; font-weight: 600; line-height: 1.15; text-align: center;
+}
+.chip i { display: block; width: 34px; height: 24px; border-radius: 5px; border: 2px solid rgba(255,255,255,0.25); }
+.chip.is-active { border-color: var(--hazard); background: #323a49; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.mini {
+  min-height: 42px; padding: 0 14px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: transparent; font-weight: 600; font-size: 15px;
+}
+.mini:disabled { opacity: 0.35; }
+.mini:active:not(:disabled) { background: rgba(255, 255, 255, 0.12); }
+.mini--danger { border-color: var(--siren); color: #ff8f82; }
+
+/* Qo'shimcha oyna */
+.sheet {
+  position: fixed; inset: 0;
+  display: flex; align-items: flex-end;
+  background: rgba(10, 12, 16, 0.6);
+  z-index: 20;
+}
+.sheet-card {
+  width: 100%; max-height: 88%; overflow: auto;
+  display: grid; gap: 16px;
+  padding: 20px max(16px, env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: var(--asphalt-raise);
+  border-top: 4px solid var(--sign-green);
+  border-radius: 20px 20px 0 0;
+}
+.sheet-card h2 { font-family: var(--display); font-weight: 800; font-size: 32px; line-height: 1; }
+.field { display: grid; gap: 8px; }
+.field label, .field .label { font-weight: 600; }
+.inline { display: flex; gap: 8px; }
+.field select, .field input[type="number"] {
+  min-height: 46px; padding: 0 12px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: var(--asphalt); color: var(--paint); font: inherit;
+}
+.field input[type="number"] { width: 110px; }
+.sheet .btn { min-height: 52px; font-size: 24px; }
+
+/* Xabar va yuklanish */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(190px + env(safe-area-inset-bottom));
+  max-width: 88vw; padding: 10px 16px;
+  background: var(--paint); color: #14171d;
+  border-radius: 12px; font-weight: 600; text-align: center;
+  z-index: 30; pointer-events: none;
+}
+.loading {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(86vw, 340px); padding: 18px; display: grid; gap: 12px;
+  background: rgba(27, 31, 39, 0.95); border: 3px solid var(--paint); border-radius: 16px;
+  z-index: 25; text-align: center;
+}
+.bar-track { height: 10px; border-radius: 6px; background: var(--asphalt-line); overflow: hidden; }
+.bar-fill { height: 100%; width: 6%; background: var(--hazard); transition: width 200ms ease; }
+
+@media (max-height: 460px) {
+  .bar h1 { display: none; }
+  .palette { margin-top: 4px; }
+  .chip { padding: 5px 8px; min-width: 84px; }
+  .chip i { height: 16px; }
+}

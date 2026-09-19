@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1b1f27">
+  <title>DEXO GTA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="game.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div class="hud">
+    <button class="hud-btn" id="pauseBtn" type="button" aria-label="Pauza"><span></span><span></span></button>
+    <div class="fps" id="fps" hidden></div>
+    <canvas class="minimap" id="minimap"></canvas>
+    <div class="speed" aria-live="off"><span class="speed-value" id="speedValue">0</span><span class="speed-unit">km/soat</span></div>
+
+    <div class="pad pad--left">
+      <button class="ctl" type="button" data-key="left" aria-label="Chapga">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4 7 12l8 8" /></svg>
+      </button>
+      <button class="ctl" type="button" data-key="right" aria-label="O‘ngga">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 4 8 8-8 8" /></svg>
+      </button>
+    </div>
+
+    <div class="pad pad--right">
+      <button class="ctl ctl--hand" type="button" data-key="hand">Qo‘l tormozi</button>
+      <div class="pad-stack">
+        <button class="ctl ctl--gas" type="button" data-key="gas">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 15 8-8 8 8" /></svg>
+          <span>Gaz</span>
+        </button>
+        <button class="ctl ctl--brake" type="button" data-key="brake">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 9 8 8 8-8" /></svg>
+          <span>Tormoz</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <p class="rotate-hint">Telefonni yotiq holatga buring, boshqaruv qulayroq bo‘ladi.</p>
+
+  <div class="overlay" id="pause" hidden>
+    <div class="card">
+      <h1>Pauza</h1>
+      <button class="btn btn--primary" type="button" id="resumeBtn">Davom etish</button>
+      <button class="btn btn--ghost" type="button" id="respawnBtn">Mashinani boshiga qaytarish</button>
+      <a class="btn btn--ghost" href="editor.html">Zona qurish</a>
+      <a class="btn btn--ghost" href="index.html">Bosh menyu</a>
+    </div>
+  </div>
+
+  <div class="overlay" id="loading">
+    <div class="card">
+      <h1>DEXO GTA</h1>
+      <p id="loadingText">Zona tayyorlanmoqda…</p>
+      <div class="bar"><div class="bar-fill" id="loadingBar"></div></div>
+    </div>
+  </div>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>

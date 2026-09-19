@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1b1f27">
+  <title>Zona qurish | DEXO GTA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="editor.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <header class="bar">
+    <a class="bar-btn" href="index.html" aria-label="Bosh sahifa">Orqaga</a>
+    <h1>Zona qurish</h1>
+    <div class="bar-actions">
+      <button class="bar-btn" type="button" id="undo" disabled>Qaytarish</button>
+      <button class="bar-btn" type="button" id="save">Saqlash</button>
+      <a class="bar-btn bar-btn--hazard" href="game.html" id="play">O‘ynash</a>
+    </div>
+  </header>
+  <p class="count" id="count"></p>
+
+  <section class="dock" aria-label="Asboblar">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tool="place" class="is-active">Qo‘yish</button>
+      <button type="button" role="tab" data-tool="select">Tanlash</button>
+      <button type="button" role="tab" data-tool="camera">Kamera</button>
+      <button type="button" id="more">Boshqa</button>
+    </div>
+
+    <div class="panel" data-panel="place">
+      <div class="panel-head">
+        <span class="hint">Ro‘yxatdan tanlang, so‘ng yerga bosing.</span>
+        <button type="button" class="mini" id="placeRot">Burish: 0°</button>
+      </div>
+      <div class="palette" id="palette"></div>
+    </div>
+
+    <div class="panel" data-panel="select" hidden>
+      <p class="hint" id="selInfo">Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.</p>
+      <div class="actions" id="selActions">
+        <button type="button" class="mini" data-act="rotL">↺ Burish</button>
+        <button type="button" class="mini" data-act="rotR">↻ Burish</button>
+        <button type="button" class="mini" data-act="smaller">− Kichraytirish</button>
+        <button type="button" class="mini" data-act="bigger">+ Kattalashtirish</button>
+        <button type="button" class="mini" data-act="tint">Rangi</button>
+        <button type="button" class="mini" data-act="dup">Nusxa</button>
+        <button type="button" class="mini mini--danger" data-act="del">O‘chirish</button>
+      </div>
+    </div>
+
+    <div class="panel" data-panel="camera" hidden>
+      <p class="hint">Bir barmoq: aylantirish. Ikki barmoq: yaqinlashtirish va surish. Boshqa rejimlarda ham ikki barmoq ishlaydi.</p>
+      <div class="actions"><button type="button" class="mini" id="resetView">Ko‘rinishni tiklash</button></div>
+    </div>
+  </section>
+
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-card" role="dialog" aria-label="Qo‘shimcha amallar">
+      <h2>Qo‘shimcha</h2>
+
+      <div class="field">
+        <label for="snapSel">Setkaga yopishish</label>
+        <select id="snapSel">
+          <option value="0">Yo‘q</option>
+          <option value="1">1 metr</option>
+          <option value="2" selected>2 metr</option>
+          <option value="6">6 metr (yo‘llar uchun)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="treeCount">Tasodifiy daraxt ekish</label>
+        <div class="inline">
+          <input id="treeCount" type="number" inputmode="numeric" min="1" max="200" value="40">
+          <button type="button" class="mini" id="plant">Ekish</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label">Fayl</span>
+        <div class="inline">
+          <button type="button" class="mini" id="export">Eksport</button>
+          <button type="button" class="mini" id="import">Import</button>
+        </div>
+        <input id="importFile" type="file" accept="application/json,.json" hidden>
+      </div>
+
+      <div class="field">
+        <button type="button" class="mini mini--danger" id="clearAll">Hammasini tozalash</button>
+      </div>
+
+      <button type="button" class="btn btn--ghost" id="closeSheet">Yopish</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <div class="loading" id="loading" hidden>
+    <p id="loadingText">Yuklanmoqda…</p>
+    <div class="bar-track"><div class="bar-fill" id="loadingBar"></div></div>
+  </div>
+
+  <script type="module" src="editor.js"></script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+/* DEXO GTA: barcha sahifalar uchun umumiy uslub.
+   G'oya: yo'l belgilari va asfalt. Yashil yo'nalish lavhasi, sariq yo'l chizig'i, oq yozuv. */
+:root {
+  --asphalt: #1b1f27;
+  --asphalt-raise: #262b36;
+  --asphalt-line: #3a4150;
+  --sign-green: #0f5a4b;
+  --sign-green-deep: #0b443a;
+  --paint: #f1f3ee;
+  --hazard: #ffc933;
+  --hazard-shadow: #b88f10;
+  --siren: #e0483a;
+  --kerb: #98a2b3;
+  --display: 'Big Shoulders Display', Impact, 'Arial Narrow', sans-serif;
+  --body: 'Barlow', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--asphalt);
+  color: var(--paint);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.45;
+  -webkit-tap-highlight-color: transparent;
+  text-size-adjust: 100%;
+}
+h1, h2, h3, p { margin: 0; }
+a { color: inherit; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 3px solid var(--hazard); outline-offset: 3px; }
+
+/* Katta tugmalar (yo'l belgisi ko'rinishida) */
+.btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  padding: 0 24px;
+  border: 3px solid transparent;
+  border-radius: 14px;
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 28px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  background: none;
+  text-align: left;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.btn--primary {
+  background: var(--hazard);
+  color: #14171d;
+  box-shadow: 0 5px 0 var(--hazard-shadow);
+}
+.btn--primary:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--hazard-shadow); }
+.btn--ghost { border-color: var(--paint); color: var(--paint); }
+.btn--ghost:active { background: rgba(255, 255, 255, 0.1); }
+.btn--danger { border-color: var(--siren); color: #ff8f82; font-size: 22px; min-height: 54px; }
+.btn--danger:active { background: rgba(224, 72, 58, 0.18); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

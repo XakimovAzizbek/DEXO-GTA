@@ -1,0 +1,82 @@
+.stage {
+  min-height: 100vh;
+  min-height: 100dvh;
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: max(20px, env(safe-area-inset-top)) 20px calc(130px + env(safe-area-inset-bottom));
+}
+
+/* Yashil yo'nalish lavhasi */
+.sign {
+  position: relative;
+  margin-bottom: 30px;
+  padding: 30px 28px 26px;
+  background: var(--sign-green);
+  border-radius: 22px;
+  box-shadow: inset 0 0 0 5px var(--sign-green), inset 0 0 0 8px var(--paint);
+}
+.sign::before,
+.sign::after {
+  content: '';
+  position: absolute;
+  bottom: -30px;
+  width: 12px;
+  height: 30px;
+  background: #5b6472;
+}
+.sign::before { left: 18%; }
+.sign::after { right: 18%; }
+
+.wordmark {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(76px, 27vw, 140px);
+  line-height: 0.86;
+  letter-spacing: 0.01em;
+}
+.tagline {
+  margin-top: 16px;
+  max-width: 30ch;
+  color: #d5eee5;
+}
+
+.menu {
+  display: grid;
+  gap: 14px;
+  margin-block: auto;
+  padding-top: 8px;
+}
+.status {
+  color: var(--kerb);
+  font-size: 15px;
+  padding-inline: 4px;
+}
+.text-link {
+  justify-self: start;
+  padding: 10px 4px;
+  font-weight: 600;
+  text-decoration-color: var(--hazard);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+}
+
+/* Pastdagi yo'l: yagona harakatli detal */
+.road {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: calc(96px + env(safe-area-inset-bottom));
+  background: #12151b;
+  border-top: 6px solid #2a303c;
+}
+.road::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  top: calc(50% - env(safe-area-inset-bottom) / 2);
+  height: 6px;
+  background: repeating-linear-gradient(90deg, var(--hazard) 0 48px, transparent 48px 96px);
+  animation: lane 1.4s linear infinite;
+}
+@keyframes lane { to { background-position: -96px 0; } }
