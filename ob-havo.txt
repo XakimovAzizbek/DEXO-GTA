@@ -1,0 +1,5 @@
+# DEXO GTA ob-havo
+# "on" bo'lsa yoqiladi, "off" bo'lsa o'chiq. Bir nechtasini birdan yoqsa ham bo'ladi.
+yomgʻir: on
+qor: off
+shamol: off

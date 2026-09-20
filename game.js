@@ -2,18 +2,23 @@ import * as THREE from 'three';
 import {
   CATALOG, HALF, ZONE_SIZE, loadSettings, loadZone, defaultZone, normalizeObject,
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
-  CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList,
+  CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
 } from './models.js';
+import { createWeather } from './weather.js';
 
 const $ = (id) => document.getElementById(id);
 const settings = loadSettings();
 // Hamma o'yinchilar egasi qurgan zone.json da o'ynaydi. ?draft=1 faqat egasining qoralamasini sinash uchun.
 const useDraft = new URLSearchParams(location.search).has('draft');
 const zone = (useDraft ? loadZone() : null) || (await fetchSharedZone()) || defaultZone();
+const bounds = normalizeBounds(zone.bounds);   // zona chegarasi: w/e/n/s = markazdan har tomonga masofa (metr)
+const boundsW = bounds.w + bounds.e, boundsD = bounds.n + bounds.s;
+const boundsCX = (bounds.e - bounds.w) / 2, boundsCZ = (bounds.s - bounds.n) / 2;
 const objects = zone.objects.map(normalizeObject);
+const weatherConfig = await fetchWeather();   // ob-havo.txt: yomg'ir / qor / shamol
 
 // ---------- Renderer ----------
 const canvas = $('scene');
@@ -41,7 +46,8 @@ scene.environment = makeEnvironment(renderer);   // faqat PBR (mashina) material
 const camera = new THREE.PerspectiveCamera(60, 1, 0.3, 700);
 
 // ---------- Yorug'lik ----------
-scene.add(new THREE.HemisphereLight(0xe6f1ff, 0x6f7a55, 1.05));
+const hemi = new THREE.HemisphereLight(0xe6f1ff, 0x6f7a55, 1.05);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff1d6, 1.5);
 if (shadowsOn) {
   sun.castShadow = true;
@@ -54,27 +60,33 @@ if (shadowsOn) {
 }
 scene.add(sun, sun.target);
 
+// ---------- Ob-havo (hammasi o'chiq bo'lsa hech narsa o'zgarmaydi) ----------
+const weather = createWeather({ scene, camera, renderer, quality, config: weatherConfig, hemi, sun });
+const SNOW_MAX = { road: 0.3, land: 0.5, billboard: 0.8 };   // yo'llarda chiziqlar ko'rinib tursin
+
 // ---------- Yer ----------
 const groundOuter = new THREE.Mesh(
   new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2),
   new THREE.MeshLambertMaterial({ color: '#5f8a49' }),
 );
 groundOuter.position.y = -0.05;
+weather.patch(groundOuter.material);
 scene.add(groundOuter);
 
 const groundZone = new THREE.Mesh(
-  new THREE.PlaneGeometry(ZONE_SIZE, ZONE_SIZE).rotateX(-Math.PI / 2),
+  new THREE.PlaneGeometry(boundsW, boundsD).rotateX(-Math.PI / 2),
   new THREE.MeshLambertMaterial({ color: '#6f9a55' }),
 );
-groundZone.position.y = 0.005;
+groundZone.position.set(boundsCX, 0.005, boundsCZ);
 groundZone.receiveShadow = shadowsOn;
+weather.patch(groundZone.material);
 scene.add(groundZone);
 
 // Zona chegarasi: sariq chiziq
 const edgeMat = new THREE.MeshBasicMaterial({ color: '#ffc933' });
 for (const [w, d, x, z] of [
-  [ZONE_SIZE, 0.6, 0, HALF], [ZONE_SIZE, 0.6, 0, -HALF],
-  [0.6, ZONE_SIZE, HALF, 0], [0.6, ZONE_SIZE, -HALF, 0],
+  [boundsW, 0.6, boundsCX, bounds.s], [boundsW, 0.6, boundsCX, -bounds.n],
+  [0.6, boundsD, bounds.e, boundsCZ], [0.6, boundsD, -bounds.w, boundsCZ],
 ]) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.05, d), edgeMat);
   m.position.set(x, 0.03, z);
@@ -91,7 +103,9 @@ for (const o of objects) {
 const dummy = new THREE.Object3D();
 for (const [type, list] of byType) {
   const kind = CATALOG[type].kind;
-  const mesh = new THREE.InstancedMesh(getGeometry(type), getMaterial(kind, 0), list.length);
+  const mat = getMaterial(kind, 0);
+  weather.patch(mat, { snowMax: SNOW_MAX[kind] ?? 1, sway: kind === 'tree' });   // qor, ho'llik, daraxt tebranishi
+  const mesh = new THREE.InstancedMesh(getGeometry(type), mat, list.length);
   list.forEach((o, i) => {
     dummy.position.set(o.x, 0, o.z);
     dummy.rotation.set(0, o.r, 0);
@@ -103,7 +117,7 @@ for (const [type, list] of byType) {
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   mesh.frustumCulled = false;
-  mesh.castShadow = shadowsOn && kind !== 'road';
+  mesh.castShadow = shadowsOn && kind !== 'road' && kind !== 'land';
   mesh.receiveShadow = shadowsOn;
   scene.add(mesh);
 }
@@ -227,6 +241,12 @@ function stepCar(dt) {
   vf -= vf * Math.abs(vf) * 0.0018 * dt;                 // havo qarshiligi
   if (input.hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 14 * dt);
 
+  if (weather.wind.x || weather.wind.z) {                 // shamol faqat harakatda seziladi (turgan mashinani surmaydi)
+    const moving = clamp(Math.abs(vf) / 8, 0, 1);
+    vf += (weather.wind.x * fx + weather.wind.z * fz) * 0.1 * moving * dt;
+    vr += (weather.wind.x * rx + weather.wind.z * rz) * moving * dt;
+  }
+
   vr *= Math.exp(-(input.hand ? 1.6 : 9) * dt);          // yon sirpanish; qo'l tormozida drift
 
   const target = (input.right ? 1 : 0) - (input.left ? 1 : 0);
@@ -246,11 +266,11 @@ function stepCar(dt) {
 
   resolveCollisions();
 
-  const lim = HALF - 2;
-  if (car.x > lim) { car.x = lim; if (car.vx > 0) car.vx *= -0.2; }
-  if (car.x < -lim) { car.x = -lim; if (car.vx < 0) car.vx *= -0.2; }
-  if (car.z > lim) { car.z = lim; if (car.vz > 0) car.vz *= -0.2; }
-  if (car.z < -lim) { car.z = -lim; if (car.vz < 0) car.vz *= -0.2; }
+  const limE = bounds.e - 2, limW = -bounds.w + 2, limS = bounds.s - 2, limN = -bounds.n + 2;
+  if (car.x > limE) { car.x = limE; if (car.vx > 0) car.vx *= -0.2; }
+  if (car.x < limW) { car.x = limW; if (car.vx < 0) car.vx *= -0.2; }
+  if (car.z > limS) { car.z = limS; if (car.vz > 0) car.vz *= -0.2; }
+  if (car.z < limN) { car.z = limN; if (car.vz < 0) car.vz *= -0.2; }
 }
 
 function resolveCollisions() {
@@ -341,6 +361,8 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) setPa
 const mm = $('minimap');
 const mctx = mm.getContext('2d');
 const RADAR_RADIUS = 70;   // metr
+const LAND_COLOR = { land_grass: '#3f6b34', land_sand: '#c9b77f', land_dirt: '#7a5f40', land_asphalt: '#454b55' };
+const RECT_COLOR = { road: '#3a3f47', house: '#e9dcc3', ridge: '#8a9580' };
 function sizeMinimap() {
   const css = mm.clientWidth || 132;
   mm.width = Math.round(css * pixelRatio);
@@ -361,15 +383,16 @@ function drawMinimap() {
   mctx.setTransform(-c * k, -s * k, s * k, -c * k, size / 2, size / 2);
   mctx.translate(-car.x, -car.z);
   const reach = RADAR_RADIUS * 1.6;
-  for (const pass of ['road', 'house', 'tree', 'billboard']) {
+  for (const pass of ['land', 'road', 'house', 'ridge', 'mountain', 'tree', 'billboard']) {
     for (const o of objects) {
       const def = CATALOG[o.t];
       if (def.kind !== pass) continue;
-      if (Math.abs(o.x - car.x) > reach || Math.abs(o.z - car.z) > reach) continue;
-      if (pass === 'tree') {
-        mctx.fillStyle = '#2e6b3f';
+      const ext = (def.r || Math.max(def.hw || 0, def.hd || 0)) * o.s;   // katta obyektlar (tog', maydon) chetidan ham ko'rinsin
+      if (Math.abs(o.x - car.x) > reach + ext || Math.abs(o.z - car.z) > reach + ext) continue;
+      if (pass === 'tree' || pass === 'mountain') {
+        mctx.fillStyle = pass === 'tree' ? '#2e6b3f' : '#8a9580';
         mctx.beginPath();
-        mctx.arc(o.x, o.z, 2.2 * o.s, 0, Math.PI * 2);
+        mctx.arc(o.x, o.z, (pass === 'tree' ? 2.2 : def.r) * o.s, 0, Math.PI * 2);
         mctx.fill();
       } else if (pass === 'billboard') {
         mctx.save();
@@ -382,7 +405,7 @@ function drawMinimap() {
         mctx.save();
         mctx.translate(o.x, o.z);
         mctx.rotate(-o.r);
-        mctx.fillStyle = pass === 'road' ? '#3a3f47' : '#e9dcc3';
+        mctx.fillStyle = pass === 'land' ? (LAND_COLOR[o.t] || '#6f8f58') : (RECT_COLOR[pass] || '#e9dcc3');
         mctx.fillRect(-def.hw * o.s, -def.hd * o.s, def.hw * o.s * 2, def.hd * o.s * 2);
         mctx.restore();
       }
@@ -547,6 +570,7 @@ function frame(now) {
     if (kmh !== shownSpeed) { shownSpeed = kmh; speedEl.textContent = kmh; }
     drawMinimap();
     updateBillboards(dt);
+    weather.update(dt);
   }
 
   renderer.render(scene, camera);

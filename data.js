@@ -4,6 +4,19 @@
 export const ZONE_SIZE = 240;          // zona kvadrati tomoni, metr
 export const HALF = ZONE_SIZE / 2;
 export const MAX_OBJECTS = 800;
+
+// Zona chegarasi: markazdan har bir tomonga masofa (metr). w = g'arb (-x), e = sharq (+x), n = shimol (-z), s = janub (+z).
+export const MIN_EXTENT = 40;
+export const MAX_EXTENT = 600;
+export const BOUNDS_STEP = 40;
+export function normalizeBounds(b) {
+  const src = b || {};
+  const one = (v) => {
+    const n = Number(v);
+    return Math.min(MAX_EXTENT, Math.max(MIN_EXTENT, Number.isFinite(n) ? n : ZONE_SIZE / 2));
+  };
+  return { w: one(src.w), e: one(src.e), n: one(src.n), s: one(src.s) };
+}
 export const KEYS = {
   settings: 'dexo-gta:settings',
   zone: 'dexo-gta:zone',        // faqat egasining editoridagi qoralama
@@ -169,16 +182,28 @@ export const CATALOG = {
   tree_round:    { label: 'Bargli daraxt',     group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   road_straight: { label: 'Yo‘l',              group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 12 },
   road_cross:    { label: 'Chorraha',          group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 6 },
+  mountain_big:  { label: 'Tog‘',              group: 'Tabiat',    kind: 'mountain', r: 28 },
+  mountain_small:{ label: 'Kichik tog‘',       group: 'Tabiat',    kind: 'mountain', r: 15 },
+  hill:          { label: 'Qir (tepalik)',     group: 'Tabiat',    kind: 'mountain', r: 12 },
+  ridge:         { label: 'Uzun adir',         group: 'Tabiat',    kind: 'ridge',    hw: 18, hd: 7 },
+  rock:          { label: 'Tosh',              group: 'Tabiat',    kind: 'mountain', r: 2.2 },
+  land_grass:    { label: 'O‘tloq maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
+  land_sand:     { label: 'Qum maydon',        group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
+  land_dirt:     { label: 'Tuproq maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
+  land_asphalt:  { label: 'Asfalt maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
   billboard:     { label: 'Reklama ekrani',    group: 'Reklama',   kind: 'billboard', hw: 1.1, hd: 0.8 },
   spawn:         { label: 'Boshlanish nuqtasi', group: 'Belgi',    kind: 'spawn' },
 };
-export const GROUPS = ['Uylar', 'Daraxtlar', 'Yo‘llar', 'Reklama', 'Belgi'];
+export const GROUPS = ['Uylar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Reklama', 'Belgi'];
 
 // Har bir obyektga tasodifiy och rang berish uchun (asl ranglarga ko'paytiriladi).
 export const TINTS = {
   house: ['#ffffff', '#ffe6cf', '#d9e8ff', '#e4ffd9', '#ffd9e2', '#f1e2ff'],
   tree:  ['#ffffff', '#e2ffd2', '#c9e6b0', '#f3ffcf'],
   road:  ['#ffffff'],
+  mountain: ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
+  ridge:    ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
+  land:     ['#ffffff'],
   billboard: Array.from({ length: 10 }, () => '#ffffff'),   // c = reklama tartib raqami (billboard.txt)
   spawn: ['#ffffff'],
 };
@@ -248,20 +273,52 @@ export async function fetchBillboardList() {
   return [];
 }
 
+// ---------- Ob-havo: ob-havo.txt ----------
+// Format (har qatorda bittadan):
+//   yomg‘ir: on
+//   qor: off
+//   shamol: off
+// "on" bo'lsa yoqiladi, "off" yoki yozilmagan bo'lsa o'chiq. Bir nechtasini birdan yoqsa ham bo'ladi.
+const ON_VALUES = new Set(['on', '1', 'true', 'ha', 'yoqilgan', 'yoqiq']);
+export function parseWeather(text) {
+  const w = { rain: false, snow: false, wind: false };
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^([^:]+):\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase().replace(/[^a-z]/g, '');   // yomg‘ir, yomg'ir, yomgʻir -> yomgir
+    const on = ON_VALUES.has(m[2].trim().toLowerCase());
+    if (key === 'yomgir' || key === 'rain') w.rain = on;
+    else if (key === 'qor' || key === 'snow') w.snow = on;
+    else if (key === 'shamol' || key === 'wind') w.wind = on;
+  }
+  return w;
+}
+export async function fetchWeather() {
+  for (const file of ['ob-havo.txt', 'obhavo.txt']) {     // ikkinchi yozuv: fayl nomi xato qo'yilgan bo'lsa ham topiladi
+    try {
+      const res = await fetch(file, { cache: 'no-store' });
+      if (res.ok) return parseWeather(await res.text());
+    } catch { /* keyingi nomni sinaymiz */ }
+  }
+  return { rain: false, snow: false, wind: false };
+}
+
 // ---------- Toqnashuv ----------
 // Aylanish: three.js dagi rotation.y = r bilan bir xil.
 // local -> world: wx = lx*cos + lz*sin, wz = -lx*sin + lz*cos
 export function makeFootprint(o) {
   const def = CATALOG[o.t];
   if (!def || def.kind === 'spawn') return null;
-  if (def.kind === 'tree') {
+  if (def.kind === 'tree' || def.kind === 'mountain') {
     const r = def.r * o.s;
     return { shape: 'circle', solid: true, x: o.x, z: o.z, r, reach2: (r + 3) * (r + 3) };
   }
   const hw = def.hw * o.s, hd = def.hd * o.s;
   const reach = Math.hypot(hw, hd) + 3;
   return {
-    shape: 'box', solid: def.kind === 'house' || def.kind === 'billboard', x: o.x, z: o.z, hw, hd,
+    shape: 'box', solid: def.kind === 'house' || def.kind === 'billboard' || def.kind === 'ridge', x: o.x, z: o.z, hw, hd,
     cos: Math.cos(o.r), sin: Math.sin(o.r), reach2: reach * reach,
   };
 }

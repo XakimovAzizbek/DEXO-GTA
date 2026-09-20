@@ -165,6 +165,70 @@ const BUILDERS = {
     }
     return finish(p);
   },
+  // ----- Tabiat -----
+  mountain_big() {
+    const p = [];
+    p.push(cone(34, 60, 9, 0, 30, 0, '#7a8570'));
+    p.push(cone(20, 46, 8, 14, 23, -6, '#6f7a66'));
+    p.push(cone(18, 38, 7, -17, 19, 9, '#808b76'));
+    p.push(cone(10.8, 18, 9, 0, 51, 0, '#f3f6fa'));          // qor (asosiy cho'qqi)
+    p.push(cone(5.2, 10, 7, -17, 33, 9, '#f3f6fa'));         // qor (ikkinchi cho'qqi)
+    return finish(p);
+  },
+  mountain_small() {
+    const p = [];
+    p.push(cone(20, 30, 8, 0, 15, 0, '#7d8872'));
+    p.push(cone(12, 22, 7, 8, 11, 4, '#748069'));
+    return finish(p);
+  },
+  hill() {
+    const g = new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    g.scale(14, 6, 14);
+    return finish([paint(g, '#6a9a4f')]);
+  },
+  ridge() {
+    const p = [];
+    for (const [x, sx, sy, sz] of [[-12, 12, 6, 8], [0, 14, 8, 9], [12, 11, 5.5, 7.5]]) {
+      const g = new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+      g.scale(sx, sy, sz);
+      g.translate(x, 0, 0);
+      p.push(paint(g, '#658f4b'));
+    }
+    return finish(p);
+  },
+  rock() {
+    const a = new THREE.IcosahedronGeometry(1, 0);
+    a.scale(2.6, 2.0, 2.2);
+    a.translate(0, 1.4, 0);
+    const b = new THREE.IcosahedronGeometry(1, 0);
+    b.scale(1.3, 1.0, 1.2);
+    b.translate(2.4, 0.7, 1);
+    return finish([paint(a, '#8b9096'), paint(b, '#7b8087')]);
+  },
+  // ----- Yer maydonlari (40 x 40 m, tekis; kattalashtirib kengaytirish mumkin) -----
+  land_grass() {
+    const p = [box(40, 0.05, 40, 0, 0.025, 0, '#4f7f3f')];
+    for (const [x, z, w, d] of [[-9, 7, 10, 7], [11, -10, 8, 9], [5, 13, 12, 5]]) p.push(box(w, 0.06, d, x, 0.03, z, '#5b8c47'));
+    return finish(p);
+  },
+  land_sand() {
+    const p = [box(40, 0.05, 40, 0, 0.025, 0, '#d9c48f')];
+    for (const [x, z, w, d] of [[-9, 7, 10, 7], [11, -10, 8, 9], [5, 13, 12, 5]]) p.push(box(w, 0.06, d, x, 0.03, z, '#cdb57c'));
+    return finish(p);
+  },
+  land_dirt() {
+    const p = [box(40, 0.05, 40, 0, 0.025, 0, '#8a6a45')];
+    for (const [x, z, w, d] of [[-9, 7, 10, 7], [11, -10, 8, 9], [5, 13, 12, 5]]) p.push(box(w, 0.06, d, x, 0.03, z, '#7b5c3b'));
+    return finish(p);
+  },
+  land_asphalt() {
+    const p = [box(40, 0.05, 40, 0, 0.025, 0, '#454b55')];
+    for (const sgn of [-1, 1]) {
+      p.push(box(38, 0.06, 0.25, 0, 0.03, sgn * 19, '#e9ecef'));
+      p.push(box(0.25, 0.06, 38, sgn * 19, 0.03, 0, '#e9ecef'));
+    }
+    return finish(p);
+  },
   billboard() {
     const p = [];
     p.push(box(2.6, 0.4, 1.8, 0, 0.2, 0, '#6d7581'));                        // poydevor

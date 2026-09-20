@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS,
+  CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS, MIN_EXTENT, MAX_EXTENT, BOUNDS_STEP, normalizeBounds,
   loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
 } from './data.js';
@@ -40,27 +40,48 @@ const outer = new THREE.Mesh(
 outer.position.y = -0.05;
 scene.add(outer);
 
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(ZONE_SIZE, ZONE_SIZE).rotateX(-Math.PI / 2),
-  new THREE.MeshLambertMaterial({ color: '#6f9a55' }),
-);
-ground.position.y = 0.005;
-scene.add(ground);
+// Zona chegarasi (markazdan har tomonga masofa). Yer, setka va chegara chizig'i shundan quriladi.
+let bounds = normalizeBounds(null);
+let groundMesh = null, gridMesh = null, borderMesh = null;
+const clampX = (v) => Math.max(-bounds.w, Math.min(bounds.e, v));
+const clampZ = (v) => Math.max(-bounds.n, Math.min(bounds.s, v));
 
-const grid = new THREE.GridHelper(ZONE_SIZE, ZONE_SIZE / 6, 0x2f5f3a, 0x437a45);
-grid.position.y = 0.03;
-grid.material.transparent = true;
-grid.material.opacity = 0.55;
-scene.add(grid);
+function disposeMesh(m) {
+  if (!m) return;
+  scene.remove(m);
+  m.geometry.dispose();
+  m.material.dispose();
+}
+function buildBoundsVisuals() {
+  disposeMesh(groundMesh); disposeMesh(gridMesh); disposeMesh(borderMesh);
+  const minX = -bounds.w, maxX = bounds.e, minZ = -bounds.n, maxZ = bounds.s;
 
-const border = new THREE.LineLoop(
-  new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-HALF, 0.06, -HALF), new THREE.Vector3(HALF, 0.06, -HALF),
-    new THREE.Vector3(HALF, 0.06, HALF), new THREE.Vector3(-HALF, 0.06, HALF),
-  ]),
-  new THREE.LineBasicMaterial({ color: 0xffc933 }),
-);
-scene.add(border);
+  groundMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(maxX - minX, maxZ - minZ).rotateX(-Math.PI / 2),
+    new THREE.MeshLambertMaterial({ color: '#6f9a55' }),
+  );
+  groundMesh.position.set((minX + maxX) / 2, 0.005, (minZ + maxZ) / 2);
+  scene.add(groundMesh);
+
+  const pts = [];
+  for (let x = Math.ceil(minX / 6) * 6; x <= maxX; x += 6) pts.push(new THREE.Vector3(x, 0.03, minZ), new THREE.Vector3(x, 0.03, maxZ));
+  for (let z = Math.ceil(minZ / 6) * 6; z <= maxZ; z += 6) pts.push(new THREE.Vector3(minX, 0.03, z), new THREE.Vector3(maxX, 0.03, z));
+  gridMesh = new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: 0x437a45, transparent: true, opacity: 0.55 }),
+  );
+  scene.add(gridMesh);
+
+  borderMesh = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(minX, 0.06, minZ), new THREE.Vector3(maxX, 0.06, minZ),
+      new THREE.Vector3(maxX, 0.06, maxZ), new THREE.Vector3(minX, 0.06, maxZ),
+    ]),
+    new THREE.LineBasicMaterial({ color: 0xffc933 }),
+  );
+  scene.add(borderMesh);
+}
+buildBoundsVisuals();
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -68,7 +89,7 @@ controls.dampingFactor = 0.12;
 controls.screenSpacePanning = false;
 controls.maxPolarAngle = Math.PI * 0.47;
 controls.minDistance = 12;
-controls.maxDistance = 330;
+controls.maxDistance = 950;
 controls.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 
@@ -93,7 +114,6 @@ const undoStack = [];
 let dirty = false;
 
 // ---------- Yordamchi ----------
-const clampZone = (v) => Math.max(-HALF, Math.min(HALF, v));
 const snapV = (v) => (snapSize > 0 ? Math.round(v / snapSize) * snapSize : v);
 const getEntry = (id) => entries.find((e) => e.id === id) || null;
 
@@ -107,7 +127,7 @@ function toast(text, ms = 2000) {
 }
 
 function currentZone() {
-  return { v: 1, size: ZONE_SIZE, objects: entries.map((e) => ({ ...e.data })) };
+  return { v: 1, size: ZONE_SIZE, bounds: { ...bounds }, objects: entries.map((e) => ({ ...e.data })) };
 }
 let saveTimer = 0;
 function scheduleSave() {
@@ -170,14 +190,16 @@ function replaceAll(list) {
 
 // Bekor qilish
 function pushUndo() {
-  undoStack.push(JSON.stringify(entries.map((e) => e.data)));
+  undoStack.push(JSON.stringify({ o: entries.map((e) => e.data), b: bounds }));
   if (undoStack.length > 40) undoStack.shift();
   updateStatus();
 }
 function undo() {
   const snap = undoStack.pop();
   if (!snap) return;
-  replaceAll(JSON.parse(snap));
+  const state = JSON.parse(snap);
+  setBounds(state.b);
+  replaceAll(state.o);
   scheduleSave();
   updateStatus();
 }
@@ -214,6 +236,7 @@ function placeAt(x, z) {
   if (entries.length >= MAX_OBJECTS) { toast('Obyektlar soni chegaraga yetdi'); return; }
   const def = CATALOG[currentType];
   const isTree = def.kind === 'tree';
+  const isNature = isTree || def.kind === 'mountain';
   pushUndo();
   if (currentType === 'spawn') {
     const old = entries.find((e) => e.data.t === 'spawn');
@@ -221,17 +244,17 @@ function placeAt(x, z) {
   }
   addEntry(normalizeObject({
     t: currentType,
-    x: clampZone(snapV(x)),
-    z: clampZone(snapV(z)),
-    r: isTree ? Math.random() * Math.PI * 2 : (placeQuarter * Math.PI) / 2,
-    s: isTree ? 0.85 + Math.random() * 0.5 : 1,
+    x: clampX(snapV(x)),
+    z: clampZ(snapV(z)),
+    r: isNature ? Math.random() * Math.PI * 2 : (placeQuarter * Math.PI) / 2,
+    s: isTree ? 0.85 + Math.random() * 0.5 : (def.kind === 'mountain' ? 0.85 + Math.random() * 0.4 : 1),
     c: currentType === 'billboard' ? 0 : randomTint(currentType),
   }));
   scheduleSave();
 }
 
 // Palitra
-const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', spawn: '#ffc933' };
+const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', spawn: '#ffc933' };
 const palette = $('palette');
 for (const group of GROUPS) {
   const label = document.createElement('span');
@@ -277,10 +300,13 @@ function setTool(next) {
 document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 setTool('place');
 
-$('resetView').addEventListener('click', () => {
-  camera.position.copy(HOME_POS);
-  controls.target.set(0, 0, 0);
-});
+function homeView() {
+  const size = Math.max(bounds.w + bounds.e, bounds.n + bounds.s);
+  const cx = (bounds.e - bounds.w) / 2, cz = (bounds.s - bounds.n) / 2;
+  camera.position.set(cx, size * 0.5, cz + size * 0.4);
+  controls.target.set(cx, 0, cz);
+}
+$('resetView').addEventListener('click', homeView);
 
 // Tanlangan obyekt uchun amallar
 function actOnSelected(fn) {
@@ -306,7 +332,7 @@ $('selActions').addEventListener('click', (ev) => {
     if (entries.length >= MAX_OBJECTS) { toast('Obyektlar soni chegaraga yetdi'); return; }
     if (entry.data.t === 'spawn') { toast('Boshlanish nuqtasi faqat bitta bo‘ladi'); return; }
     pushUndo();
-    const copy = addEntry({ ...entry.data, x: clampZone(entry.data.x + 6), z: clampZone(entry.data.z + 6) });
+    const copy = addEntry({ ...entry.data, x: clampX(entry.data.x + 6), z: clampZ(entry.data.z + 6) });
     selectEntry(copy.id);
     scheduleSave();
   } else if (act === 'del') {
@@ -337,8 +363,8 @@ function pickEntryId(ev) {
   return hits.length ? hits[0].object.userData.id : null;
 }
 function moveEntry(entry, x, z) {
-  entry.data.x = clampZone(snapV(x));
-  entry.data.z = clampZone(snapV(z));
+  entry.data.x = clampX(snapV(x));
+  entry.data.z = clampZ(snapV(z));
   refreshEntry(entry);
 }
 
@@ -387,6 +413,35 @@ canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// ---------- Zona kengaytirish ----------
+function updateBoundsUI() {
+  $('boundsInfo').textContent = `${bounds.w + bounds.e} × ${bounds.n + bounds.s} m`;
+  document.querySelectorAll('[data-bound-out]').forEach((o) => { o.textContent = `${bounds[o.dataset.boundOut]} m`; });
+}
+function setBounds(next) {
+  bounds = normalizeBounds(next);
+  buildBoundsVisuals();
+  updateBoundsUI();
+}
+document.querySelectorAll('[data-bound]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.bound;
+    const delta = Number(btn.dataset.d);
+    const value = bounds[key] + delta * BOUNDS_STEP;
+    if (value < MIN_EXTENT || value > MAX_EXTENT) {
+      toast(value < MIN_EXTENT ? `Bu tomon ${MIN_EXTENT} m dan kichik bo‘lmaydi` : `Bu tomon ${MAX_EXTENT} m dan katta bo‘lmaydi`);
+      return;
+    }
+    pushUndo();
+    setBounds({ ...bounds, [key]: value });
+    scheduleSave();
+    if (delta < 0) {
+      const outside = entries.filter((e) => e.data.x < -bounds.w || e.data.x > bounds.e || e.data.z < -bounds.n || e.data.z > bounds.s).length;
+      if (outside) toast(`${outside} ta obyekt chegaradan tashqarida qoldi`, 3500);
+    }
+  });
+});
+
 // ---------- Tasodifiy daraxtlar ----------
 function plantTrees(count) {
   const feet = entries.map((e) => makeFootprint(e.data)).filter(Boolean);
@@ -395,8 +450,8 @@ function plantTrees(count) {
   let planted = 0, tries = 0;
   while (planted < count && tries < count * 25 && entries.length < MAX_OBJECTS) {
     tries++;
-    const x = (Math.random() * 2 - 1) * (HALF - 4);
-    const z = (Math.random() * 2 - 1) * (HALF - 4);
+    const x = -bounds.w + 4 + Math.random() * (bounds.w + bounds.e - 8);
+    const z = -bounds.n + 4 + Math.random() * (bounds.n + bounds.s - 8);
     if (feet.some((f) => collideCircle(f, x, z, 2.4))) continue;
     if (spawnEntry && Math.hypot(x - spawnEntry.data.x, z - spawnEntry.data.z) < 6) continue;
     const t = Math.random() < 0.5 ? 'tree_pine' : 'tree_round';
@@ -447,6 +502,7 @@ $('importFile').addEventListener('change', async (e) => {
     if (!isValidZone(zone)) throw new Error('format');
     if (!confirm(`Fayldagi ${zone.objects.length} ta obyekt hozirgi zonani almashtiradi. Davom etasizmi?`)) return;
     pushUndo();
+    setBounds(zone.bounds);
     replaceAll(zone.objects);
     scheduleSave();
     sheet.hidden = true;
@@ -478,6 +534,7 @@ $('pull').addEventListener('click', async () => {
   if (!zone) { toast('Serverda zone.json topilmadi'); return; }
   if (!confirm('Hozirgi zona serverdagi zona bilan almashtiriladi. Davom etasizmi?')) return;
   pushUndo();
+  setBounds(zone.bounds);
   replaceAll(zone.objects);
   scheduleSave();
   sheet.hidden = true;
@@ -486,6 +543,8 @@ $('pull').addEventListener('click', async () => {
 
 // ---------- Ishga tushirish ----------
 const startZone = loadZone() || (await fetchSharedZone()) || defaultZone();
+setBounds(startZone.bounds);
+homeView();
 for (const o of startZone.objects) addEntry(normalizeObject(o));
 updateStatus();
 updateSelInfo();

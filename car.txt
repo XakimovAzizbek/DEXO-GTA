@@ -12,7 +12,7 @@ follow: 15
 name: NEXIA 2
 car: nexia2.glb
 length: 6
-lift: -0.5
+lift: -0.34
 carz: -6
 camdist: 9.5
 camheight: 3.9
