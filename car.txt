@@ -1,10 +1,21 @@
 name: KIA K5
 car: kia_k5.glb
 carx: 1
-carz: 0.1
-camdist: 9
+carz: 1.1
+camdist: 5
 camheight: 2.9
 aimy: 1.9
-fov: 53
+fov: 79
 fovspeed: 0.25
 follow: 15
+
+name: NEXIA 2
+car: nexia2.glb
+length: 6
+lift: -0.5
+carz: -6
+camdist: 9.5
+camheight: 3.9
+aimy: 2.8
+fov: 63
+follow: 20
