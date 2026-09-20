@@ -200,10 +200,13 @@ function selectEntry(id) {
 }
 function updateSelInfo() {
   const entry = selectedId != null ? getEntry(selectedId) : null;
+  const isBoard = !!entry && CATALOG[entry.data.t].kind === 'billboard';
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}`
+    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
+  const tintBtn = $('selActions').querySelector('[data-act="tint"]');
+  if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : 'Rangi';   // reklama ekranida "rang" o'rniga reklama raqami almashadi
 }
 
 // ---------- Qo'yish ----------
@@ -222,13 +225,13 @@ function placeAt(x, z) {
     z: clampZone(snapV(z)),
     r: isTree ? Math.random() * Math.PI * 2 : (placeQuarter * Math.PI) / 2,
     s: isTree ? 0.85 + Math.random() * 0.5 : 1,
-    c: randomTint(currentType),
+    c: currentType === 'billboard' ? 0 : randomTint(currentType),
   }));
   scheduleSave();
 }
 
 // Palitra
-const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', spawn: '#ffc933' };
+const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', spawn: '#ffc933' };
 const palette = $('palette');
 for (const group of GROUPS) {
   const label = document.createElement('span');

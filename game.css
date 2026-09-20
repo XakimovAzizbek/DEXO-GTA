@@ -147,3 +147,21 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
     transform: none;
   }
 }
+
+/* Reklama ekrani yonida chiqadigan "Open" tugmasi */
+.open-link {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 74px);
+  transform: translateX(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 96px; min-height: 44px; padding: 0 22px;
+  background: var(--hazard); color: #14171d;
+  border: 3px solid #14171d; border-radius: 12px;
+  font-weight: 600; font-size: 18px; text-decoration: none;
+  box-shadow: 0 4px 0 var(--hazard-shadow);
+}
+.open-link:active { transform: translateX(-50%) translateY(2px); box-shadow: 0 2px 0 var(--hazard-shadow); }
+@media (max-width: 520px) and (orientation: portrait) {
+  .open-link { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 92px); }
+}

@@ -169,15 +169,17 @@ export const CATALOG = {
   tree_round:    { label: 'Bargli daraxt',     group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   road_straight: { label: 'Yo‘l',              group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 12 },
   road_cross:    { label: 'Chorraha',          group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 6 },
+  billboard:     { label: 'Reklama ekrani',    group: 'Reklama',   kind: 'billboard', hw: 1.1, hd: 0.8 },
   spawn:         { label: 'Boshlanish nuqtasi', group: 'Belgi',    kind: 'spawn' },
 };
-export const GROUPS = ['Uylar', 'Daraxtlar', 'Yo‘llar', 'Belgi'];
+export const GROUPS = ['Uylar', 'Daraxtlar', 'Yo‘llar', 'Reklama', 'Belgi'];
 
 // Har bir obyektga tasodifiy och rang berish uchun (asl ranglarga ko'paytiriladi).
 export const TINTS = {
   house: ['#ffffff', '#ffe6cf', '#d9e8ff', '#e4ffd9', '#ffd9e2', '#f1e2ff'],
   tree:  ['#ffffff', '#e2ffd2', '#c9e6b0', '#f3ffcf'],
   road:  ['#ffffff'],
+  billboard: Array.from({ length: 10 }, () => '#ffffff'),   // c = reklama tartib raqami (billboard.txt)
   spawn: ['#ffffff'],
 };
 export function randomTint(type, rnd = Math.random) {
@@ -207,6 +209,45 @@ export function normalizeObject(o) {
   };
 }
 
+// ---------- Reklama ekranlari: billboard.txt ----------
+// Format (har bir reklama "video:" qatoridan boshlanadi):
+//   video: https://.../reklama.mp4      (yoki ombordagi fayl: ads/reklama.mp4)
+//   button: https://...                 ("Open" tugmasi ochadigan havola)
+// Faqat http/https havolalar qabul qilinadi.
+export const BILLBOARD_SCREEN = { w: 12, h: 6, y: 12.5, z: 0.43 };   // ekran o'lchami (metr), balandligi va old tomondan masofasi
+
+function safeUrl(value) {
+  try {
+    const base = typeof location !== 'undefined' ? location.href : 'https://example.com/';
+    const url = new URL(value, base);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : '';
+  } catch { return ''; }
+}
+export function parseBillboardList(text) {
+  const ads = [];
+  let cur = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^([A-Za-z_]+)\s*:\s*(.+)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const url = safeUrl(m[2].trim());
+    if (key === 'video') { cur = url ? { video: url, button: '' } : null; if (cur) ads.push(cur); }
+    else if (key === 'button' && cur) cur.button = url;
+  }
+  return ads;
+}
+export async function fetchBillboardList() {
+  for (const file of ['billboard.txt', 'billiboard.txt']) {     // ikkinchi yozuv: fayl nomi xato qo'yilgan bo'lsa ham topiladi
+    try {
+      const res = await fetch(file, { cache: 'no-store' });
+      if (res.ok) return parseBillboardList(await res.text());
+    } catch { /* keyingi nomni sinaymiz */ }
+  }
+  return [];
+}
+
 // ---------- Toqnashuv ----------
 // Aylanish: three.js dagi rotation.y = r bilan bir xil.
 // local -> world: wx = lx*cos + lz*sin, wz = -lx*sin + lz*cos
@@ -220,7 +261,7 @@ export function makeFootprint(o) {
   const hw = def.hw * o.s, hd = def.hd * o.s;
   const reach = Math.hypot(hw, hd) + 3;
   return {
-    shape: 'box', solid: def.kind === 'house', x: o.x, z: o.z, hw, hd,
+    shape: 'box', solid: def.kind === 'house' || def.kind === 'billboard', x: o.x, z: o.z, hw, hd,
     cos: Math.cos(o.r), sin: Math.sin(o.r), reach2: reach * reach,
   };
 }

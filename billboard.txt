@@ -1,0 +1,8 @@
+# DEXO GTA reklama ekranlari
+# Har bir reklama "video:" qatoridan boshlanadi.
+#   video:  to'g'ridan-to'g'ri mp4 havola (yoki ombordagi fayl, masalan ads/reklama1.mp4)
+#   button: mashina reklama yoniga kelganda chiqadigan "Open" tugmasi ochadigan havola
+#
+# Namuna (boshidagi # belgisini olib tashlab, o'z havolangizni yozing):
+video: reklama.mp4
+button: https://t.me/azizbek_xizmatlar/2

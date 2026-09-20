@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {
   CATALOG, HALF, ZONE_SIZE, loadSettings, loadZone, defaultZone, normalizeObject,
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
-  CAR_DEFAULTS, cameraPose, loadCarDraft,
+  CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
@@ -361,7 +361,7 @@ function drawMinimap() {
   mctx.setTransform(-c * k, -s * k, s * k, -c * k, size / 2, size / 2);
   mctx.translate(-car.x, -car.z);
   const reach = RADAR_RADIUS * 1.6;
-  for (const pass of ['road', 'house', 'tree']) {
+  for (const pass of ['road', 'house', 'tree', 'billboard']) {
     for (const o of objects) {
       const def = CATALOG[o.t];
       if (def.kind !== pass) continue;
@@ -371,6 +371,13 @@ function drawMinimap() {
         mctx.beginPath();
         mctx.arc(o.x, o.z, 2.2 * o.s, 0, Math.PI * 2);
         mctx.fill();
+      } else if (pass === 'billboard') {
+        mctx.save();
+        mctx.translate(o.x, o.z);
+        mctx.rotate(-o.r);
+        mctx.fillStyle = '#4b7bec';
+        mctx.fillRect(-6 * o.s, -0.9 * o.s, 12 * o.s, 1.8 * o.s);
+        mctx.restore();
       } else {
         mctx.save();
         mctx.translate(o.x, o.z);
@@ -393,6 +400,101 @@ function drawMinimap() {
   mctx.lineTo(size / 2 - u, size / 2 + u);
   mctx.closePath();
   mctx.fill();
+}
+
+// ---------- Reklama ekranlari (billboard.txt) ----------
+// Video faqat mashina yaqin kelganda o'ynaydi (telefon qizib ketmasligi uchun), bir vaqtda ko'pi bilan 2 ta.
+const openLink = $('openLink');
+const adPlayers = [];    // har bir reklama uchun bitta video
+const screens = [];      // { o, ad, player, mats }
+const ACTIVE_RANGE = 90;   // metr: shu masofadan yaqinda video o'ynaydi
+const BUTTON_RANGE = 35;   // metr: shu masofadan yaqinda "Open" tugmasi chiqadi
+const SCREEN_ASPECT = BILLBOARD_SCREEN.w / BILLBOARD_SCREEN.h;
+
+function makeAdPlayer(ad) {
+  return { ad, video: null, texture: null, mats: [] };
+}
+function startAd(p) {
+  if (!p.video) {
+    const v = document.createElement('video');
+    v.crossOrigin = 'anonymous';           // havola CORS ruxsat berishi kerak (o'z omboringizdagi fayl doim mos)
+    v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
+    v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
+    v.src = p.ad.video;
+    const tex = new THREE.VideoTexture(v);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    v.addEventListener('loadedmetadata', () => {      // ekranni buzmasdan to'ldirish (chetlari qirqiladi)
+      const va = v.videoWidth / v.videoHeight;
+      if (!Number.isFinite(va) || va <= 0) return;
+      if (va > SCREEN_ASPECT) { tex.repeat.set(SCREEN_ASPECT / va, 1); tex.offset.set((1 - SCREEN_ASPECT / va) / 2, 0); }
+      else { tex.repeat.set(1, va / SCREEN_ASPECT); tex.offset.set(0, (1 - va / SCREEN_ASPECT) / 2); }
+    });
+    v.addEventListener('playing', () => {             // video tayyor bo'lgach ekranga qo'yamiz
+      for (const m of p.mats) { m.map = tex; m.color.set('#ffffff'); m.needsUpdate = true; }
+    });
+    v.addEventListener('error', () => console.warn('Reklama videosi yuklanmadi:', p.ad.video));
+    p.video = v;
+    p.texture = tex;
+  }
+  if (p.video.paused) p.video.play().catch(() => { /* brauzer hozircha ruxsat bermadi, keyingi urinishda */ });
+}
+function stopAd(p) {
+  if (p.video && !p.video.paused) p.video.pause();
+}
+
+function setupBillboards(ads) {
+  const list = objects.filter((o) => o.t === 'billboard');
+  if (!list.length) return;
+  const planeGeo = new THREE.PlaneGeometry(BILLBOARD_SCREEN.w, BILLBOARD_SCREEN.h);
+  for (const o of list) {
+    const ad = ads.length ? ads[o.c % ads.length] : null;
+    let player = null;
+    if (ad) {
+      player = adPlayers.find((p) => p.ad === ad);
+      if (!player) { player = makeAdPlayer(ad); adPlayers.push(player); }
+    }
+    const group = new THREE.Group();
+    group.position.set(o.x, 0, o.z);
+    group.rotation.y = o.r;
+    group.scale.setScalar(o.s);
+    const mats = [];
+    for (const side of [1, -1]) {                     // old va orqa tomonda bir xil video
+      const mat = new THREE.MeshBasicMaterial({ color: '#20242b' });
+      const plane = new THREE.Mesh(planeGeo, mat);
+      plane.position.set(0, BILLBOARD_SCREEN.y, side * BILLBOARD_SCREEN.z);
+      if (side < 0) plane.rotation.y = Math.PI;
+      group.add(plane);
+      mats.push(mat);
+    }
+    scene.add(group);
+    if (player) player.mats.push(...mats);
+    screens.push({ o, ad, player, mats });
+  }
+}
+
+let billTimer = 0, shownLink = '';
+function updateBillboards(dt) {
+  if (!screens.length) return;
+  billTimer -= dt;
+  if (billTimer > 0) return;
+  billTimer = 0.4;
+  const sorted = screens
+    .map((s) => ({ s, d: Math.hypot(s.o.x - car.x, s.o.z - car.z) }))
+    .sort((a, b) => a.d - b.d);
+
+  const want = new Set();
+  for (const { s, d } of sorted.slice(0, 2)) if (d < ACTIVE_RANGE && s.player) want.add(s.player);
+  for (const p of adPlayers) { if (want.has(p)) startAd(p); else stopAd(p); }
+
+  const near = sorted.find(({ s, d }) => d < BUTTON_RANGE && s.ad && s.ad.button);
+  const link = near ? near.s.ad.button : '';
+  if (link !== shownLink) {
+    shownLink = link;
+    if (link) openLink.href = link;
+    openLink.hidden = !link;
+  }
 }
 
 // ---------- Hajm va sikl ----------
@@ -444,6 +546,7 @@ function frame(now) {
     const kmh = Math.round(speed * 3.6);
     if (kmh !== shownSpeed) { shownSpeed = kmh; speedEl.textContent = kmh; }
     drawMinimap();
+    updateBillboards(dt);
   }
 
   renderer.render(scene, camera);
@@ -462,6 +565,7 @@ async function start() {
     (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
   );
   respawn();
+  setupBillboards(await fetchBillboardList());
 
   if (settings.useCityModel) {
     loadingText.textContent = 'Shahar modeli yuklanmoqda (90 MB)…';

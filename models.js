@@ -165,6 +165,20 @@ const BUILDERS = {
     }
     return finish(p);
   },
+  billboard() {
+    const p = [];
+    p.push(box(2.6, 0.4, 1.8, 0, 0.2, 0, '#6d7581'));                        // poydevor
+    p.push(cyl(0.55, 0.75, 9, 10, 0, 4.5, 0, '#98a1ad'));                     // ustun
+    p.push(box(13, 7, 0.8, 0, 12.5, 0, '#3f4650'));                            // ramka
+    p.push(box(12, 6, 0.02, 0, 12.5, 0.405, '#14171d'));                       // ekran (old tomon)
+    p.push(box(12, 6, 0.02, 0, 12.5, -0.405, '#14171d'));                      // ekran (orqa tomon)
+    p.push(box(12.6, 0.12, 0.9, 0, 9.0, 0.7, '#59626e'));                      // pastki yo'lak
+    for (const x of [-4.5, 0, 4.5]) {
+      p.push(box(0.12, 0.12, 1.1, x, 16.25, 0.55, '#59626e'));                // chiroq tayanchi
+      p.push(box(0.7, 0.22, 0.6, x, 16.3, 1.15, '#eef1f4'));                   // chiroq
+    }
+    return finish(p);
+  },
   spawn() {
     const p = [];
     p.push(cyl(2.4, 2.4, 0.12, 24, 0, 0.06, 0, '#ffc933'));
