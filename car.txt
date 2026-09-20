@@ -19,3 +19,12 @@ camheight: 3.9
 aimy: 2.8
 fov: 63
 follow: 20
+
+name: malibu premier
+car: malibu_premier.glb
+length: 7
+carz: -6
+camdist: 10.5
+camheight: 3.5
+aimy: 3.5
+tilt: 2.5

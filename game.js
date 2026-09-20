@@ -598,7 +598,7 @@ async function start() {
       scene.add(city);
     } catch (err) {
       console.warn('Shahar modeli yuklanmadi:', err);
-      loadingText.textContent = 'Shahar modeli topilmadi (assets/procedural_city_6.glb). Zona bilan davom etamiz.';
+      loadingText.textContent = 'Shahar modeli topilmadi (apocalyptic_city.glb). Zona bilan davom etamiz.';
       await new Promise((r) => setTimeout(r, 1800));
     }
   }
