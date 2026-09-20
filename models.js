@@ -248,9 +248,9 @@ async function makeGLTFLoader() {
   return loader;
 }
 
-// car = { name, file, rotate, length } (car.txt dan). Fayl avval cars/ papkasidan, keyin asosiy papkadan qidiriladi.
-// Natija: uzunligi car.length metr, markazi (0,0) da, g'ildiraklari y=0 da, old tomoni +z ga qaragan guruh.
-export async function loadCarModel(car, onProgress) {
+// car = car.txt dagi yozuv (name, file, rotate, length, lift ...). Fayl avval cars/ papkasidan, keyin asosiy papkadan qidiriladi.
+// GLB sahnasini yuklaydi (hali o'lchamlanmagan).
+export async function loadCarScene(car, onProgress) {
   const loader = await makeGLTFLoader();
   let gltf = null, lastError = null;
   for (const path of [`cars/${car.file}`, car.file]) {
@@ -278,24 +278,57 @@ export async function loadCarModel(car, onProgress) {
       if (m.isMeshStandardMaterial) m.envMapIntensity = 1;
     }
   });
+  return model;
+}
+
+// Faqat KO'RINADIGAN qismlarning aniq (uchma-uch) chegara qutisi. Yashirin yordamchi qismlar va
+// burilgan detallarning katta qutilari mashinani markazdan siljitib yubormasligi uchun.
+function visibleBox(root) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  root.traverseVisible((o) => {
+    const pos = o.isMesh && o.geometry && o.geometry.attributes.position;
+    if (!pos) return;
+    for (let i = 0; i < pos.count; i++) box.expandByPoint(v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld));
+  });
+  return box.isEmpty() ? new THREE.Box3().setFromObject(root) : box;
+}
+
+// Modelni o'lchamlaydi: uzunligi car.length metr, markazi (0,0) da, g'ildiraklari y = car.lift da,
+// old tomoni +z ga qaragan. Sozlamalar o'zgarsa shu funksiyani qayta chaqirish yetadi (qayta yuklash shart emas).
+export function fitCarModel(model, car) {
+  model.removeFromParent();
+  if (!model.userData.fitBox) model.userData.fitBox = visibleBox(model);   // bir marta o'lchanadi
+  const b = model.userData.fitBox;
+  const raw = b.getSize(new THREE.Vector3());
+
+  // Uzun tomonni z o'qiga to'g'rilaymiz; rotate: 180 bo'lsa old va orqa almashadi
+  const yaw = (raw.x > raw.z ? Math.PI / 2 : 0) + THREE.MathUtils.degToRad(car.rotate || 0);
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const x of [b.min.x, b.max.x]) {
+    for (const z of [b.min.z, b.max.z]) {
+      const rx = x * c + z * s, rz = -x * s + z * c;       // three.js dagi rotation.y qoidasi
+      minX = Math.min(minX, rx); maxX = Math.max(maxX, rx);
+      minZ = Math.min(minZ, rz); maxZ = Math.max(maxZ, rz);
+    }
+  }
+  const k = (car.length || 4.6) / Math.max(maxZ - minZ, 0.001);
 
   const inner = new THREE.Group();
   inner.add(model);
-  const raw = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-  // Uzun tomonni z o'qiga to'g'rilaymiz; rotate: 180 bo'lsa old va orqa almashadi
-  inner.rotation.y = (raw.x > raw.z ? Math.PI / 2 : 0) + THREE.MathUtils.degToRad(car.rotate || 0);
+  inner.rotation.y = yaw;
+  inner.scale.setScalar(k);
+  inner.position.set(-k * (minX + maxX) / 2, -k * b.min.y + (car.lift || 0), -k * (minZ + maxZ) / 2);
 
   const root = new THREE.Group();
   root.add(inner);
-  root.updateMatrixWorld(true);
-  let box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  inner.scale.setScalar((car.length || 4.6) / Math.max(size.z, 0.001));
-  root.updateMatrixWorld(true);
-  box = new THREE.Box3().setFromObject(root);
-  const center = box.getCenter(new THREE.Vector3());
-  inner.position.set(-center.x, -box.min.y, -center.z);
   return root;
+}
+
+export async function loadCarModel(car, onProgress) {
+  return fitCarModel(await loadCarScene(car, onProgress), car);
 }
 
 // Modelni xotiradan tozalash (mashina almashtirilganda)

@@ -9,6 +9,7 @@ export const KEYS = {
   zone: 'dexo-gta:zone',        // faqat egasining editoridagi qoralama
   car: 'dexo-gta:car',          // tanlangan mashina nomi
   github: 'dexo-gta:github',    // faqat egasining qurilmasida (editor)
+  carDraft: 'dexo-gta:cardraft:', // mashina sozlamalari qoralamasi (faqat egasi, oxiriga mashina nomi qo'shiladi)
 };
 
 export const DEFAULT_SETTINGS = {
@@ -60,7 +61,23 @@ export async function fetchSharedZone() {
 // Format (har bir mashina "name:" qatoridan boshlanadi):
 //   name: bmw
 //   car: bmwM5.glb
-// Ixtiyoriy: rotate: 180 (model teskari yuklansa), length: 4.6 (metr)
+// Qolgan qatorlar ixtiyoriy (car-editor.html yozadi), yozilmasa CAR_DEFAULTS ishlatiladi.
+export const CAR_DEFAULTS = {
+  length: 4.6,       // mashina uzunligi, metr (kattaligi)
+  rotate: 0,         // 0 yoki 180: old va orqa tomonni almashtirish
+  lift: 0,           // yerdan balandligi, metr
+  carx: 0,           // mashina ekranda chapga(-) / o'ngga(+), metr
+  carz: 0,           // mashina ekranda orqaga(-) / oldinga(+), metr
+  camdist: 11,       // kamera masofasi, metr
+  camheight: 5.72,   // kamera balandligi, metr
+  aimy: 1.4,         // kamera nishon balandligi, metr
+  fov: 60,           // ko'rish burchagi, daraja
+  fovspeed: 0.35,    // tezlikda ko'rish burchagi kengayishi
+  follow: 8,         // kamera ergashish tezligi
+  tilt: 1,           // engashish kuchi (tormoz va burilishda)
+};
+const CAR_KEYS = Object.keys(CAR_DEFAULTS);
+
 export function parseCarList(text) {
   const cars = [];
   let cur = null;
@@ -71,20 +88,66 @@ export function parseCarList(text) {
     if (!m) continue;
     const key = m[1].toLowerCase();
     const val = m[2].trim();
-    if (key === 'name') { cur = { name: val, file: '', rotate: 0, length: 4.6 }; cars.push(cur); }
+    if (key === 'name') { cur = { name: val, file: '', ...CAR_DEFAULTS }; cars.push(cur); }
     else if (!cur) continue;
     else if (key === 'car') cur.file = val;
-    else if (key === 'rotate') cur.rotate = Number(val) || 0;
-    else if (key === 'length') cur.length = Number(val) > 0 ? Number(val) : 4.6;
+    else if (CAR_KEYS.includes(key)) {
+      const n = Number(val);
+      cur[key] = Number.isFinite(n) && (key !== 'length' || n > 0) ? n : CAR_DEFAULTS[key];
+    }
   }
   return cars.filter((c) => c.name && c.file);
 }
+
+// Ro'yxatni car.txt matniga qaytaradi (faqat standartdan farq qiladigan qiymatlar yoziladi)
+export function serializeCarList(cars) {
+  return cars.map((c) => {
+    const lines = [`name: ${c.name}`, `car: ${c.file}`];
+    for (const key of CAR_KEYS) {
+      const v = Number(c[key]);
+      if (Number.isFinite(v) && Math.abs(v - CAR_DEFAULTS[key]) > 1e-9) lines.push(`${key}: ${Math.round(v * 1000) / 1000}`);
+    }
+    return lines.join('\n');
+  }).join('\n\n') + '\n';
+}
+
 export async function fetchCarList() {
   try {
     const res = await fetch('car.txt', { cache: 'no-store' });
     if (!res.ok) return [];
     return parseCarList(await res.text());
   } catch { return []; }
+}
+
+// Kamera holati: o'yin (game.js) va car-editor.js aynan shu funksiyadan foydalanadi,
+// shuning uchun editordagi ko'rinish o'yindagi bilan bir xil bo'ladi.
+// distOffset: o'yinchi sozlamalaridagi kamera masofasi - 11.
+export function cameraPose(p, carX, carZ, heading, speed, distOffset = 0) {
+  const dist = p.camdist + distOffset;
+  const height = Math.max(1.6, p.camheight + distOffset * 0.32);
+  const fx = Math.sin(heading), fz = Math.cos(heading);      // oldinga
+  const rx = -Math.cos(heading), rz = Math.sin(heading);     // mashinaning o'ng tomoni (ekranda ham o'ng)
+  const side = -p.carx;                                       // kamera chapga = mashina ekranda o'ngga
+  const ahead = 4 - p.carz;                                   // nishon nuqtasi mashina oldida
+  return {
+    px: carX - fx * dist + rx * side, py: height, pz: carZ - fz * dist + rz * side,
+    lx: carX + fx * ahead + rx * side, ly: p.aimy, lz: carZ + fz * ahead + rz * side,
+    fov: p.fov + Math.min(Math.max(speed, 0), 42) * p.fovspeed,
+  };
+}
+
+// Egasining qoralamasi (faqat o'z qurilmasida; game.html?draft=1 sinash uchun)
+export function loadCarDraft(name) {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEYS.carDraft + name));
+    if (!d || typeof d !== 'object') return {};
+    const out = {};
+    for (const key of CAR_KEYS) if (Number.isFinite(Number(d[key]))) out[key] = Number(d[key]);
+    return out;
+  } catch { return {}; }
+}
+export function saveCarDraft(name, profile) {
+  try { localStorage.setItem(KEYS.carDraft + name, JSON.stringify(profile)); return true; } catch { return false; }
 }
 
 // Tanlangan mashina: faqat nomi saqlanadi, qolganini car.txt beradi

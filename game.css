@@ -132,3 +132,18 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 .bar { height: 10px; border-radius: 6px; background: var(--asphalt-line); overflow: hidden; }
 .bar-fill { height: 100%; width: 8%; background: var(--hazard); transition: width 200ms ease; }
 .fatal { padding: 24px; color: #ff8f82; }
+
+/* Tor ekran (telefon, tik holat): tugmalar va tezlik yozuvi bir-birining ustiga chiqmasligi uchun */
+@media (max-width: 520px) and (orientation: portrait) {
+  .pad { gap: 10px; }
+  .ctl { width: 74px; height: 74px; }
+  .pad--right { flex-direction: column; align-items: flex-end; }
+  .ctl--gas, .ctl--brake { width: 104px; height: 64px; }
+  .ctl--hand { width: 104px; height: 56px; font-size: 13px; }
+  .speed {
+    left: max(12px, env(safe-area-inset-left));
+    bottom: auto;
+    top: calc(max(12px, env(safe-area-inset-top)) + 64px);
+    transform: none;
+  }
+}

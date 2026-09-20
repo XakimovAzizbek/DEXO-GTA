@@ -65,3 +65,36 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Fayl saqlash oynasi (savefile.js): zona va mashina editorlari uchun */
+.save-dialog {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(10, 12, 16, 0.72);
+}
+.save-card {
+  width: min(100%, 560px); max-height: 92%; overflow: auto;
+  display: grid; gap: 12px;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+  background: var(--asphalt-raise);
+  border-top: 4px solid var(--sign-green);
+  border-radius: 20px 20px 0 0;
+}
+.save-card h2 { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1; }
+.save-card p { color: var(--kerb); font-size: 15px; }
+.save-card ol { margin: 0; padding-left: 20px; font-size: 15px; display: grid; gap: 2px; }
+.save-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.save-btn {
+  min-height: 46px; padding: 0 16px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: transparent; font-weight: 600; font-size: 16px;
+}
+.save-btn--primary { background: var(--hazard); border-color: var(--hazard); color: #14171d; }
+.save-card .save-status { min-height: 1.4em; color: var(--hazard); font-weight: 600; }
+.save-card textarea {
+  width: 100%; min-height: 110px; padding: 10px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: var(--asphalt); color: var(--paint);
+  font: 13px/1.35 ui-monospace, Menlo, Consolas, monospace;
+  resize: vertical; -webkit-user-select: text; user-select: text;
+}

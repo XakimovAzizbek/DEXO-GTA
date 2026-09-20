@@ -1,12 +1,78 @@
 <!doctype html>
-<html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" id="viewport" content="width=device-width, initial-scale=1">
-    </head>
-    <body>
-      <div>
-        Hello World!
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1b1f27">
+  <title>Mashina sozlash | DEXO GTA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="car-editor.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <header class="bar">
+    <a class="bar-btn" href="car.html">Orqaga</a>
+    <h1>Mashina sozlash</h1>
+    <div class="bar-actions">
+      <a class="bar-btn" id="test" href="game.html?draft=1">Sinash</a>
+      <button class="bar-btn bar-btn--hazard" type="button" id="save">Saqlash</button>
+    </div>
+  </header>
+
+  <!-- Oyin ekrani shu yerda aynan o'yindagi nisbatda ko'rinadi -->
+  <main class="stage" id="stage">
+    <div class="frame" id="frame"><div class="guides" id="guides"></div></div>
+  </main>
+
+  <section class="panel" id="panel">
+    <div class="panel-top">
+      <div class="cars" id="cars" role="listbox" aria-label="Mashinalar"></div>
+      <button class="fold" type="button" id="fold" aria-expanded="true">Yashirish</button>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="camera" class="is-active">Kamera</button>
+      <button type="button" role="tab" data-tab="car">Mashina</button>
+      <button type="button" role="tab" data-tab="test">Sinov</button>
+    </div>
+
+    <div class="body" id="body">
+      <div class="rows" data-tabpanel="camera"></div>
+
+      <div class="rows" data-tabpanel="car" hidden>
+        <div class="row row--flip" id="flipRow">
+          <span class="row-label">Oldi va orqa tomon</span>
+          <button type="button" class="mini" id="flip">Normal</button>
+        </div>
       </div>
-    </body>
+
+      <div class="rows" data-tabpanel="test" hidden>
+        <label class="check"><input type="checkbox" id="demo"><span>Burilish namoyishi: kamera ergashishi va engashishni ko‘rish</span></label>
+        <label class="check"><input type="checkbox" id="guideChk" checked><span>Markaz chiziqlarini ko‘rsatish</span></label>
+        <button type="button" class="mini mini--danger" id="reset">Standart qiymatlarga qaytarish</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="loading" id="loading" hidden>
+    <p id="loadingText">Mashina yuklanmoqda…</p>
+    <div class="bar-track"><div class="bar-fill" id="loadingBar"></div></div>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="car-editor.js"></script>
+</body>
 </html>

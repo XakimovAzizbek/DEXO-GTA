@@ -1,2 +1,10 @@
 name: KIA K5
 car: kia_k5.glb
+carx: 1
+carz: 0.1
+camdist: 9
+camheight: 2.9
+aimy: 1.9
+fov: 53
+fovspeed: 0.25
+follow: 15

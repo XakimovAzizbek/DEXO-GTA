@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import {
   CATALOG, HALF, ZONE_SIZE, loadSettings, loadZone, defaultZone, normalizeObject,
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
+  CAR_DEFAULTS, cameraPose, loadCarDraft,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
@@ -157,6 +158,7 @@ const carTilt = new THREE.Group();
 carRoot.add(carTilt);
 scene.add(carRoot);
 let carModel = { wheels: [], frontPivots: [] };
+let carProfile = { ...CAR_DEFAULTS };   // tanlangan mashinaning kamera va o'lcham sozlamalari (car.txt)
 
 function useFallbackCar() {
   const built = buildCar();
@@ -168,8 +170,10 @@ function useFallbackCar() {
 async function setupCar(setText, setProgress) {
   const cars = await fetchCarList();
   const wanted = loadSelectedCarName();
-  const entry = cars.find((c) => c.name === wanted) || cars[0] || null;
+  let entry = cars.find((c) => c.name === wanted) || cars[0] || null;
+  if (entry && useDraft) entry = { ...entry, ...loadCarDraft(entry.name) };   // egasining sinov qoralamasi
   if (entry) {
+    carProfile = entry;
     setText(`Mashina yuklanmoqda: ${entry.name}…`);
     try {
       const model = await loadCarModel(entry, setProgress);
@@ -280,16 +284,16 @@ function lerpAngle(a, b, t) {
 }
 const desiredCam = new THREE.Vector3();
 function placeCamera(snap, dt = 0.016) {
-  camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * 4.5));
-  const dist = settings.cameraDistance;
-  const cfx = Math.sin(camHeading), cfz = Math.cos(camHeading);
-  desiredCam.set(car.x - cfx * dist, Math.max(1.6, 2.2 + dist * 0.32), car.z - cfz * dist);
-  if (snap) camera.position.copy(desiredCam);
-  else camera.position.lerp(desiredCam, 1 - Math.exp(-dt * 8));
-  camera.lookAt(car.x + cfx * 4, 1.4, car.z + cfz * 4);
+  const p = carProfile;
+  camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * p.follow * 0.56));
   const speed = Math.hypot(car.vx, car.vz);
-  const fov = 60 + clamp(speed, 0, CAR.maxSpeed) * 0.35;
-  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  // Kamera formulasi data.js da: car-editor.html dagi ko'rinish bilan aynan bir xil
+  const pose = cameraPose(p, car.x, car.z, camHeading, speed, settings.cameraDistance - 11);
+  desiredCam.set(pose.px, pose.py, pose.pz);
+  if (snap) camera.position.copy(desiredCam);
+  else camera.position.lerp(desiredCam, 1 - Math.exp(-dt * p.follow));
+  camera.lookAt(pose.lx, pose.ly, pose.lz);
+  if (Math.abs(camera.fov - pose.fov) > 0.05) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
 }
 
 // ---------- Boshqaruv ----------
@@ -425,8 +429,9 @@ function frame(now) {
     const acc = (vf - prevVf) / Math.max(dt, 0.001);
     prevVf = vf;
     const ease = Math.min(1, dt * 6);
-    tiltPitch += (clamp(-acc * 0.0035, -0.05, 0.05) - tiltPitch) * ease;
-    tiltRoll += (clamp(-car.steer * clamp(Math.abs(vf) / 20, 0, 1) * 0.05, -0.05, 0.05) - tiltRoll) * ease;
+    const tiltK = carProfile.tilt;
+    tiltPitch += (clamp(-acc * 0.0035, -0.05, 0.05) * tiltK - tiltPitch) * ease;
+    tiltRoll += (clamp(-car.steer * clamp(Math.abs(vf) / 20, 0, 1) * 0.05, -0.05, 0.05) * tiltK - tiltRoll) * ease;
     carTilt.rotation.set(tiltPitch, 0, tiltRoll);
 
     for (const w of carModel.wheels) w.rotation.x += (vf * dt) / 0.38;
