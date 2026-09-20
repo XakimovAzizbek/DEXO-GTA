@@ -3,6 +3,7 @@ import {
   CATALOG, HALF, ZONE_SIZE, loadSettings, loadZone, defaultZone, normalizeObject,
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
   CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
+  makeRamp, groundHeightAt, rampSurfaceNear,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
@@ -62,7 +63,7 @@ scene.add(sun, sun.target);
 
 // ---------- Ob-havo (hammasi o'chiq bo'lsa hech narsa o'zgarmaydi) ----------
 const weather = createWeather({ scene, camera, renderer, quality, config: weatherConfig, hemi, sun });
-const SNOW_MAX = { road: 0.3, land: 0.5, billboard: 0.8 };   // yo'llarda chiziqlar ko'rinib tursin
+const SNOW_MAX = { road: 0.3, ramp: 0.3, land: 0.5, billboard: 0.8 };   // yo'llarda chiziqlar ko'rinib tursin
 
 // ---------- Yer ----------
 const groundOuter = new THREE.Mesh(
@@ -97,15 +98,17 @@ for (const [w, d, x, z] of [
 const byType = new Map();
 for (const o of objects) {
   if (o.t === 'spawn') continue;
-  if (!byType.has(o.t)) byType.set(o.t, []);
-  byType.get(o.t).push(o);
+  const key = CATALOG[o.t].kind === 'ramp' ? `${o.t}:${o.y || 0}` : o.t;   // rampa: har balandlik uchun alohida model
+  if (!byType.has(key)) byType.set(key, []);
+  byType.get(key).push(o);
 }
 const dummy = new THREE.Object3D();
-for (const [type, list] of byType) {
+for (const list of byType.values()) {
+  const type = list[0].t;
   const kind = CATALOG[type].kind;
   const mat = getMaterial(kind, 0);
   weather.patch(mat, { snowMax: SNOW_MAX[kind] ?? 1, sway: kind === 'tree' });   // qor, ho'llik, daraxt tebranishi
-  const mesh = new THREE.InstancedMesh(getGeometry(type), mat, list.length);
+  const mesh = new THREE.InstancedMesh(getGeometry(type, list[0].y || 0), mat, list.length);
   list.forEach((o, i) => {
     dummy.position.set(o.x, 0, o.z);
     dummy.rotation.set(0, o.r, 0);
@@ -122,6 +125,7 @@ for (const [type, list] of byType) {
   scene.add(mesh);
 }
 const colliders = objects.map(makeCollider).filter(Boolean);
+const ramps = objects.map(makeRamp).filter(Boolean);   // rampalar: mashina balandligini belgilaydi
 
 // ---------- Mashina modeli ----------
 function buildCar() {
@@ -205,7 +209,7 @@ async function setupCar(setText, setProgress) {
 
 // ---------- Mashina holati va fizikasi ----------
 const spawn = objects.find((o) => o.t === 'spawn') || { x: 0, z: 0, r: 0 };
-const car = { x: 0, z: 0, h: 0, vx: 0, vz: 0, steer: 0 };
+const car = { x: 0, z: 0, y: 0, vy: 0, h: 0, vx: 0, vz: 0, steer: 0 };
 const CAR = {
   maxSpeed: 42, reverseMax: 12, accel: 18, brake: 34, radius: 1.05,
   circles: [1.4, 0, -1.4],
@@ -215,12 +219,33 @@ let camHeading = 0;
 function respawn() {
   car.x = spawn.x; car.z = spawn.z; car.h = spawn.r;
   car.vx = 0; car.vz = 0; car.steer = 0;
+  car.y = groundHeightAt(ramps, car.x, car.z); car.vy = 0;
+  camBaseY = car.y;
   camHeading = car.h;
   placeCamera(true);
 }
 
 const input = { left: false, right: false, gas: false, brake: false, hand: false };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// Yo'nalish bo'yicha nishab (balandlik/metr): mashina oldi va orqasidagi sirt balandliklari farqi
+function surfaceSlope(fx, fz) {
+  if (!ramps.length) return 0;
+  const hf = groundHeightAt(ramps, car.x + fx * 1.4, car.z + fz * 1.4);
+  const hr = groundHeightAt(ramps, car.x - fx * 1.4, car.z - fz * 1.4);
+  return Math.abs(hf - hr) < 1.0 ? (hf - hr) / 2.8 : 0;   // rampa chetida keskin farq bo'lsa hisobga olinmaydi
+}
+// Mashina balandligi: rampaga chiqqanda sirtga ergashadi, chetidan chiqib ketsa tushadi
+function stepVertical(dt) {
+  if (!ramps.length) { car.y = 0; car.vy = 0; return; }
+  const target = groundHeightAt(ramps, car.x, car.z);
+  if (target >= car.y) { car.y = Math.min(target, car.y + 10 * dt); car.vy = 0; }
+  else {
+    car.vy -= 25 * dt;
+    car.y = Math.max(target, car.y + car.vy * dt);
+    if (car.y <= target) car.vy = 0;
+  }
+}
 
 function stepCar(dt) {
   const fx = Math.sin(car.h), fz = Math.cos(car.h);
@@ -240,6 +265,10 @@ function stepCar(dt) {
   }
   vf -= vf * Math.abs(vf) * 0.0018 * dt;                 // havo qarshiligi
   if (input.hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 14 * dt);
+
+  if (ramps.length && car.y - groundHeightAt(ramps, car.x, car.z) < 0.3) {
+    vf -= 9.8 * 0.6 * surfaceSlope(fx, fz) * dt;          // tepaga chiqishda sekinlashadi, pastga tushishda tezlashadi
+  }
 
   if (weather.wind.x || weather.wind.z) {                 // shamol faqat harakatda seziladi (turgan mashinani surmaydi)
     const moving = clamp(Math.abs(vf) / 8, 0, 1);
@@ -271,6 +300,8 @@ function stepCar(dt) {
   if (car.x < limW) { car.x = limW; if (car.vx < 0) car.vx *= -0.2; }
   if (car.z > limS) { car.z = limS; if (car.vz > 0) car.vz *= -0.2; }
   if (car.z < limN) { car.z = limN; if (car.vz < 0) car.vz *= -0.2; }
+
+  stepVertical(dt);
 }
 
 function resolveCollisions() {
@@ -291,6 +322,19 @@ function resolveCollisions() {
           car.vz -= 1.15 * vn * hit.nz;
         }
       }
+      for (const r of ramps) {                            // rampa/baland yo'lning baland devoriga urilinadi, ustida yurish mumkin
+        const dx = cx - r.x, dz = cz - r.z;
+        if (dx * dx + dz * dz > r.reach2) continue;
+        const hit = collideCircle(r, cx, cz, CAR.radius);
+        if (!hit || rampSurfaceNear(r, cx, cz) - car.y <= 0.5) continue;
+        car.x += hit.nx * hit.pen;
+        car.z += hit.nz * hit.pen;
+        const vn = car.vx * hit.nx + car.vz * hit.nz;
+        if (vn < 0) {
+          car.vx -= 1.15 * vn * hit.nx;
+          car.vz -= 1.15 * vn * hit.nz;
+        }
+      }
     }
   }
 }
@@ -303,16 +347,18 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 const desiredCam = new THREE.Vector3();
+let camBaseY = 0;   // kamera balandligi mashina balandligiga silliq ergashadi
 function placeCamera(snap, dt = 0.016) {
   const p = carProfile;
   camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * p.follow * 0.56));
   const speed = Math.hypot(car.vx, car.vz);
   // Kamera formulasi data.js da: car-editor.html dagi ko'rinish bilan aynan bir xil
   const pose = cameraPose(p, car.x, car.z, camHeading, speed, settings.cameraDistance - 11);
-  desiredCam.set(pose.px, pose.py, pose.pz);
+  camBaseY = snap ? car.y : camBaseY + (car.y - camBaseY) * (1 - Math.exp(-dt * 6));
+  desiredCam.set(pose.px, pose.py + camBaseY, pose.pz);
   if (snap) camera.position.copy(desiredCam);
   else camera.position.lerp(desiredCam, 1 - Math.exp(-dt * p.follow));
-  camera.lookAt(pose.lx, pose.ly, pose.lz);
+  camera.lookAt(pose.lx, pose.ly + camBaseY, pose.lz);
   if (Math.abs(camera.fov - pose.fov) > 0.05) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
 }
 
@@ -362,7 +408,7 @@ const mm = $('minimap');
 const mctx = mm.getContext('2d');
 const RADAR_RADIUS = 70;   // metr
 const LAND_COLOR = { land_grass: '#3f6b34', land_sand: '#c9b77f', land_dirt: '#7a5f40', land_asphalt: '#454b55' };
-const RECT_COLOR = { road: '#3a3f47', house: '#e9dcc3', ridge: '#8a9580' };
+const RECT_COLOR = { road: '#3a3f47', ramp: '#59606b', house: '#e9dcc3', ridge: '#8a9580' };
 function sizeMinimap() {
   const css = mm.clientWidth || 132;
   mm.width = Math.round(css * pixelRatio);
@@ -383,7 +429,7 @@ function drawMinimap() {
   mctx.setTransform(-c * k, -s * k, s * k, -c * k, size / 2, size / 2);
   mctx.translate(-car.x, -car.z);
   const reach = RADAR_RADIUS * 1.6;
-  for (const pass of ['land', 'road', 'house', 'ridge', 'mountain', 'tree', 'billboard']) {
+  for (const pass of ['land', 'road', 'ramp', 'house', 'ridge', 'mountain', 'tree', 'billboard']) {
     for (const o of objects) {
       const def = CATALOG[o.t];
       if (def.kind !== pass) continue;
@@ -536,7 +582,7 @@ const speedEl = $('speedValue');
 const fpsEl = $('fps');
 fpsEl.hidden = !settings.showFps;
 let last = performance.now(), fpsAcc = 0, fpsFrames = 0, shownSpeed = -1;
-let prevVf = 0, tiltPitch = 0, tiltRoll = 0;
+let prevVf = 0, tiltPitch = 0, tiltRoll = 0, tiltSlope = 0;
 
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -548,7 +594,7 @@ function frame(now) {
 
     const speed = Math.hypot(car.vx, car.vz);
     const vf = car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h);
-    carRoot.position.set(car.x, 0, car.z);
+    carRoot.position.set(car.x, car.y, car.z);
     carRoot.rotation.y = car.h;
 
     const acc = (vf - prevVf) / Math.max(dt, 0.001);
@@ -557,7 +603,9 @@ function frame(now) {
     const tiltK = carProfile.tilt;
     tiltPitch += (clamp(-acc * 0.0035, -0.05, 0.05) * tiltK - tiltPitch) * ease;
     tiltRoll += (clamp(-car.steer * clamp(Math.abs(vf) / 20, 0, 1) * 0.05, -0.05, 0.05) * tiltK - tiltRoll) * ease;
-    carTilt.rotation.set(tiltPitch, 0, tiltRoll);
+    const slopePitch = ramps.length ? -Math.atan(surfaceSlope(Math.sin(car.h), Math.cos(car.h))) : 0;   // rampada burun nishabga qaraydi
+    tiltSlope += (slopePitch - tiltSlope) * ease;
+    carTilt.rotation.set(tiltPitch + tiltSlope, 0, tiltRoll);
 
     for (const w of carModel.wheels) w.rotation.x += (vf * dt) / 0.38;
     for (const p of carModel.frontPivots) p.rotation.y = -car.steer * 0.5;
@@ -598,7 +646,7 @@ async function start() {
       scene.add(city);
     } catch (err) {
       console.warn('Shahar modeli yuklanmadi:', err);
-      loadingText.textContent = 'Shahar modeli topilmadi (apocalyptic_city.glb). Zona bilan davom etamiz.';
+      loadingText.textContent = 'Shahar modeli topilmadi (assets/procedural_city_6.glb). Zona bilan davom etamiz.';
       await new Promise((r) => setTimeout(r, 1800));
     }
   }

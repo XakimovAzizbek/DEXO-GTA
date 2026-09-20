@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS, MIN_EXTENT, MAX_EXTENT, BOUNDS_STEP, normalizeBounds,
+  CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS, MIN_EXTENT, MAX_EXTENT, BOUNDS_STEP, normalizeBounds, RAMP_STEP, RAMP_MAX,
   loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
 } from './data.js';
@@ -108,6 +108,7 @@ let selectedId = null;
 let helper = null;
 let tool = 'place';
 let currentType = 'house_small';
+let placeLevel = 0;          // qo'yiladigan rampaning balandligi (m)
 let placeQuarter = 0;        // qo'yiladigan uy/yo'l burilishi: 0..3 * 90°
 let snapSize = 2;
 const undoStack = [];
@@ -158,7 +159,7 @@ function applyTransform(mesh, data) {
 
 function addEntry(data) {
   const def = CATALOG[data.t];
-  const mesh = new THREE.Mesh(getGeometry(data.t), getMaterial(def.kind, data.c));
+  const mesh = new THREE.Mesh(getGeometry(data.t, data.y || 0), getMaterial(def.kind, data.c));
   applyTransform(mesh, data);
   const entry = { id: nextId++, data, mesh };
   mesh.userData.id = entry.id;
@@ -177,6 +178,7 @@ function removeEntry(entry) {
 
 function refreshEntry(entry) {
   applyTransform(entry.mesh, entry.data);
+  entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0);   // rampa balandligi o'zgarganda
   entry.mesh.material = getMaterial(CATALOG[entry.data.t].kind, entry.data.c);
   if (helper && selectedId === entry.id) helper.update();
   updateSelInfo();
@@ -223,10 +225,16 @@ function selectEntry(id) {
 function updateSelInfo() {
   const entry = selectedId != null ? getEntry(selectedId) : null;
   const isBoard = !!entry && CATALOG[entry.data.t].kind === 'billboard';
+  const isRamp = !!entry && CATALOG[entry.data.t].kind === 'ramp';
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}`
+    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
+  const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
+  setDisabled('hUp', !isRamp);                      // balandlik faqat rampalar uchun
+  setDisabled('hDown', !isRamp);
+  setDisabled('smaller', !entry || isRamp);         // rampa kattalashtirilmaydi (nishab buzilmasin)
+  setDisabled('bigger', !entry || isRamp);
   const tintBtn = $('selActions').querySelector('[data-act="tint"]');
   if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : 'Rangi';   // reklama ekranida "rang" o'rniga reklama raqami almashadi
 }
@@ -249,12 +257,13 @@ function placeAt(x, z) {
     r: isNature ? Math.random() * Math.PI * 2 : (placeQuarter * Math.PI) / 2,
     s: isTree ? 0.85 + Math.random() * 0.5 : (def.kind === 'mountain' ? 0.85 + Math.random() * 0.4 : 1),
     c: currentType === 'billboard' ? 0 : randomTint(currentType),
+    y: placeLevel,
   }));
   scheduleSave();
 }
 
 // Palitra
-const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', spawn: '#ffc933' };
+const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', spawn: '#ffc933' };
 const palette = $('palette');
 for (const group of GROUPS) {
   const label = document.createElement('span');
@@ -281,6 +290,10 @@ function markActiveChip() {
 }
 markActiveChip();
 
+$('placeLevel').addEventListener('click', () => {
+  placeLevel = placeLevel >= RAMP_MAX ? 0 : placeLevel + RAMP_STEP;
+  $('placeLevel').textContent = `Balandlik: ${placeLevel} m`;
+});
 $('placeRot').addEventListener('click', () => {
   placeQuarter = (placeQuarter + 1) % 4;
   $('placeRot').textContent = `Burish: ${placeQuarter * 90}°`;
@@ -325,6 +338,12 @@ $('selActions').addEventListener('click', (ev) => {
   const kind = CATALOG[entry.data.t].kind;
   if (act === 'rotL') actOnSelected((e) => { e.data.r -= Math.PI / 12; });
   else if (act === 'rotR') actOnSelected((e) => { e.data.r += Math.PI / 12; });
+  else if (act === 'hUp' || act === 'hDown') {
+    const min = CATALOG[entry.data.t].rise === 0 ? RAMP_STEP : 0;
+    const next = (entry.data.y || 0) + (act === 'hUp' ? RAMP_STEP : -RAMP_STEP);
+    if (next < min || next > RAMP_MAX) { toast(next < min ? `Bu yo‘l ${min} m dan past bo‘lmaydi` : `Balandlik ${RAMP_MAX} m dan oshmaydi`); return; }
+    actOnSelected((e) => { e.data.y = next; });
+  }
   else if (act === 'smaller') actOnSelected((e) => { e.data.s = Math.max(0.4, e.data.s / 1.1); });
   else if (act === 'bigger') actOnSelected((e) => { e.data.s = Math.min(3, e.data.s * 1.1); });
   else if (act === 'tint') actOnSelected((e) => { e.data.c = (e.data.c + 1) % TINTS[kind].length; });

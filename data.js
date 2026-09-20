@@ -182,6 +182,8 @@ export const CATALOG = {
   tree_round:    { label: 'Bargli daraxt',     group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   road_straight: { label: 'Yo‘l',              group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 12 },
   road_cross:    { label: 'Chorraha',          group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 6 },
+  ramp_up:       { label: 'Rampa (3 m ko‘tariladi)', group: 'Rampa', kind: 'ramp',  hw: 6,  hd: 12, rise: 3 },
+  ramp_flat:     { label: 'Baland yo‘l',       group: 'Rampa',     kind: 'ramp',  hw: 6,  hd: 12, rise: 0 },
   mountain_big:  { label: 'Tog‘',              group: 'Tabiat',    kind: 'mountain', r: 28 },
   mountain_small:{ label: 'Kichik tog‘',       group: 'Tabiat',    kind: 'mountain', r: 15 },
   hill:          { label: 'Qir (tepalik)',     group: 'Tabiat',    kind: 'mountain', r: 12 },
@@ -194,13 +196,14 @@ export const CATALOG = {
   billboard:     { label: 'Reklama ekrani',    group: 'Reklama',   kind: 'billboard', hw: 1.1, hd: 0.8 },
   spawn:         { label: 'Boshlanish nuqtasi', group: 'Belgi',    kind: 'spawn' },
 };
-export const GROUPS = ['Uylar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Reklama', 'Belgi'];
+export const GROUPS = ['Uylar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Rampa', 'Reklama', 'Belgi'];
 
 // Har bir obyektga tasodifiy och rang berish uchun (asl ranglarga ko'paytiriladi).
 export const TINTS = {
   house: ['#ffffff', '#ffe6cf', '#d9e8ff', '#e4ffd9', '#ffd9e2', '#f1e2ff'],
   tree:  ['#ffffff', '#e2ffd2', '#c9e6b0', '#f3ffcf'],
   road:  ['#ffffff'],
+  ramp:  ['#ffffff'],
   mountain: ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
   ridge:    ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
   land:     ['#ffffff'],
@@ -220,18 +223,27 @@ export function isValidZone(z) {
     z.objects.every(o => o && hasType(o.t) && Number.isFinite(+o.x) && Number.isFinite(+o.z));
 }
 
+// Rampa balandligi (y) 3 m qadam bilan: 0, 3, 6 ... 30. Rampa kattalashtirilmaydi (nishab va balandlik buzilmasin).
+export const RAMP_STEP = 3;
+export const RAMP_MAX = 30;
 export function normalizeObject(o) {
-  const kind = CATALOG[o.t].kind;
+  const def = CATALOG[o.t];
+  const kind = def.kind;
   const tints = TINTS[kind].length;
   const s = Number(o.s);
-  return {
+  const out = {
     t: o.t,
     x: Number(o.x),
     z: Number(o.z),
     r: Number.isFinite(Number(o.r)) ? Number(o.r) : 0,
-    s: Number.isFinite(s) && s > 0 ? s : 1,
+    s: kind === 'ramp' ? 1 : (Number.isFinite(s) && s > 0 ? s : 1),
     c: Math.abs(Math.floor(Number(o.c) || 0)) % tints,
   };
+  if (kind === 'ramp') {
+    const min = def.rise === 0 ? RAMP_STEP : 0;     // "Baland yo'l" yerdan kamida 3 m balandda
+    out.y = Math.min(RAMP_MAX, Math.max(min, Math.round((Number(o.y) || 0) / RAMP_STEP) * RAMP_STEP));
+  }
+  return out;
 }
 
 // ---------- Reklama ekranlari: billboard.txt ----------
@@ -303,6 +315,42 @@ export async function fetchWeather() {
     } catch { /* keyingi nomni sinaymiz */ }
   }
   return { rain: false, snow: false, wind: false };
+}
+
+// ---------- Rampalar (balandlik) ----------
+// Rampa: eni 12 m, uzunligi 24 m. Yuqori uchi = modelning +z tomoni. y = past uchining balandligi.
+export function makeRamp(o) {
+  const def = CATALOG[o.t];
+  if (!def || def.kind !== 'ramp') return null;
+  const hw = def.hw, hd = def.hd, reach = Math.hypot(hw, hd) + 3;
+  return {
+    shape: 'box', x: o.x, z: o.z, hw, hd, cos: Math.cos(o.r), sin: Math.sin(o.r),
+    base: o.y || 0, rise: def.rise, reach2: reach * reach,
+  };
+}
+// Nuqtadagi sirt balandligi; nuqta rampa ichida bo'lmasa null
+export function rampSurface(r, x, z) {
+  const dx = x - r.x, dz = z - r.z;
+  const lx = dx * r.cos - dz * r.sin;
+  const lz = dx * r.sin + dz * r.cos;
+  if (Math.abs(lx) > r.hw || Math.abs(lz) > r.hd) return null;
+  return r.base + (r.rise * (lz + r.hd)) / (2 * r.hd);
+}
+// Nuqtaga eng yaqin rampa nuqtasidagi sirt balandligi (devorga urilishni aniqlash uchun)
+export function rampSurfaceNear(r, x, z) {
+  const dx = x - r.x, dz = z - r.z;
+  const lz = Math.max(-r.hd, Math.min(r.hd, dx * r.sin + dz * r.cos));
+  return r.base + (r.rise * (lz + r.hd)) / (2 * r.hd);
+}
+export function groundHeightAt(ramps, x, z) {
+  let h = 0;
+  for (const r of ramps) {
+    const dx = x - r.x, dz = z - r.z;
+    if (dx * dx + dz * dz > r.reach2) continue;
+    const s = rampSurface(r, x, z);
+    if (s !== null && s > h) h = s;
+  }
+  return h;
 }
 
 // ---------- Toqnashuv ----------

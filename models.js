@@ -85,7 +85,50 @@ function windowGrid(parts, hw, hd, floors, floorH, baseY, hex, opts = {}) {
   }
 }
 
+// Rampa/baland yo'l: eni 12, uzunligi 24 m. Past uchi hLow, yuqori uchi (+z) hHigh balandlikda.
+// Ostida yergacha to'la tayanch (damba) bor, havoda osilib turmaydi.
+function rampGeometry(hLow, hHigh) {
+  const hw = 6, hd = 12;
+  const P = (x, y, z) => new THREE.Vector3(x, y, z);
+  const parts = [];
+  const quad = (p0, p1, p2, p3, out, hex) => {
+    const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
+    if (n.lengthSq() < 1e-9) return;                       // yuzasi nol tomonni o'tkazib yuboramiz
+    const [a, b, c, d] = n.dot(out) >= 0 ? [p0, p1, p2, p3] : [p0, p3, p2, p1];
+    n.normalize();
+    if (n.dot(out) < 0) n.negate();
+    const v = [a, b, c, a, c, d];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v.flatMap((p) => [p.x, p.y, p.z]), 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(v.flatMap(() => [n.x, n.y, n.z]), 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(v.length * 2).fill(0), 2));
+    parts.push(paint(g, hex));
+  };
+  const A = P(-hw, 0, -hd), B = P(hw, 0, -hd), C = P(hw, 0, hd), D = P(-hw, 0, hd);          // pastki (yer)
+  const a = P(-hw, hLow, -hd), b = P(hw, hLow, -hd), c = P(hw, hHigh, hd), d = P(-hw, hHigh, hd);  // yuqori (yo'l sirti)
+  quad(a, b, c, d, new THREE.Vector3(0, 1, 0), '#3a3f47');       // asfalt
+  quad(D, C, c, d, new THREE.Vector3(0, 0, 1), '#6b7078');       // old (yuqori uch) devori
+  quad(A, B, b, a, new THREE.Vector3(0, 0, -1), '#6b7078');      // orqa (past uch) devori
+  quad(B, C, c, b, new THREE.Vector3(1, 0, 0), '#6b7078');       // o'ng yon devor
+  quad(A, D, d, a, new THREE.Vector3(-1, 0, 0), '#6b7078');      // chap yon devor
+
+  // Chiziqlar nishabga mos qiyshaytiriladi
+  const theta = Math.atan2(hHigh - hLow, 2 * hd);
+  const mark = (w, l, x, zc, hex) => {
+    const g = new THREE.BoxGeometry(w, 0.06, l);
+    g.rotateX(-theta);
+    g.translate(x, hLow + ((hHigh - hLow) * (zc + hd)) / (2 * hd) + 0.03, zc);
+    parts.push(paint(g, hex));
+  };
+  for (const zc of [-10, -6, -2, 2, 6, 10]) mark(0.3, 2.4, 0, zc, '#ffc933');
+  mark(0.25, (2 * hd) / Math.cos(theta), -5.5, 0, '#e9ecef');
+  mark(0.25, (2 * hd) / Math.cos(theta), 5.5, 0, '#e9ecef');
+  return finish(parts);
+}
+
 const BUILDERS = {
+  ramp_up(level = 0) { return rampGeometry(level, level + 3); },
+  ramp_flat(level = 3) { return rampGeometry(level, level); },
   house_small() {
     const hw = 4, hd = 4, h = 3.4, p = [];
     p.push(box(hw * 2 + 0.5, 0.3, hd * 2 + 0.5, 0, 0.15, 0, '#9aa0a6'));
@@ -256,9 +299,11 @@ const BUILDERS = {
 };
 
 const geoCache = new Map();
-export function getGeometry(type) {
-  if (!geoCache.has(type)) geoCache.set(type, BUILDERS[type]());
-  return geoCache.get(type);
+// level: faqat rampalar uchun (past uchining balandligi); har bir balandlik uchun alohida model quriladi
+export function getGeometry(type, level = 0) {
+  const key = CATALOG[type].kind === 'ramp' ? `${type}:${level}` : type;
+  if (!geoCache.has(key)) geoCache.set(key, BUILDERS[type](level));
+  return geoCache.get(key);
 }
 
 const matCache = new Map();
