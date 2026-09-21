@@ -28,3 +28,16 @@ camdist: 10.5
 camheight: 3.5
 aimy: 3.5
 tilt: 2.5
+
+name: caterpillar 797f mining truck
+car: caterpillar_797f_mining_truck.glb
+length: 7
+carx: 0.2
+carz: -6
+camdist: 7.5
+camheight: 4.8
+aimy: 2
+fov: 54
+fovspeed: 0.05
+follow: 20
+tilt: 2.5
