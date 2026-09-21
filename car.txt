@@ -24,6 +24,7 @@ camheight: 3.9
 aimy: 2.8
 fov: 63
 follow: 20
+light: shape=round func=brake color=#ff2a2a x=0.66 y=0.92 z=-2.12 size=0.65 mirror=1
 
 name: malibu premier
 car: malibu_premier.glb
@@ -33,6 +34,8 @@ camdist: 10.5
 camheight: 3.5
 aimy: 3.5
 tilt: 2.5
+light: shape=round func=brake color=#ff2a2a x=0.58 y=0.8 z=-2.12 size=0.75 mirror=1
+light: shape=round func=button color=#ffffff x=0.62 y=0.18 z=2.2 size=1.35 mirror=1
 
 name: caterpillar 797f mining truck
 car: caterpillar_797f_mining_truck.glb
