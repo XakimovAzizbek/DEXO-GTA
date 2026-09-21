@@ -1,6 +1,10 @@
 html, body { overflow: hidden; overscroll-behavior: none; }
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
+/* Butun o'yin shu qatlam ichida: telefon tik turganda u 90° buriladi (game.js: applyLayout) */
+#stage { position: fixed; inset: 0; }
+.is-rotated #stage { inset: auto; left: 0; top: 0; transform-origin: 0 0; }
+
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
 .hud { position: fixed; inset: 0; pointer-events: none; }
@@ -90,33 +94,32 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 .ctl--hand { width: 84px; height: 84px; font-size: 13px; line-height: 1.15; border-color: var(--siren); text-align: center; }
 .ctl--hand.is-down { background: var(--siren); border-color: var(--siren); color: #fff; }
 
-/* Kichik balandlikdagi telefonlar (yotiq holat) */
-@media (max-height: 420px) {
-  .ctl { width: 78px; height: 78px; }
-  .ctl--gas, .ctl--brake { width: 100px; height: 60px; }
-  .ctl--hand { width: 72px; height: 72px; }
-  .minimap { width: 104px; height: 104px; }
-  .speed-value { font-size: 34px; }
-}
+/* Kichik balandlikdagi ekran (yotiq holat, buralgan holat ham): game.js body ga .compact qo'shadi */
+.compact .ctl { width: 78px; height: 78px; }
+.compact .ctl--gas, .compact .ctl--brake { width: 100px; height: 60px; }
+.compact .ctl--hand { width: 72px; height: 72px; }
+.compact .minimap { width: 104px; height: 104px; }
+.compact .speed-value { font-size: 34px; }
 
-/* Portret holat: ogohlantirish */
+/* Yotiq dizayn eslatmasi (telefon tik turganda bir necha soniya ko'rinadi) */
 .rotate-hint {
   position: fixed;
   left: 50%; top: 50%;
   transform: translate(-50%, -50%);
-  width: min(86vw, 340px);
-  padding: 12px 16px;
+  width: min(86%, 380px);
+  padding: 14px 16px;
+  display: grid; gap: 10px;
   background: rgba(15, 90, 75, 0.94);
   border: 3px solid var(--paint);
   border-radius: 16px;
   text-align: center;
-  pointer-events: none;
-  display: none;
+  z-index: 5;
 }
-@media (orientation: portrait) {
-  .rotate-hint { display: block; animation: hint-out 0.4s ease 5s forwards; }
+.rotate-hint button {
+  min-height: 44px; padding: 0 16px;
+  border: 2px solid var(--paint); border-radius: 10px;
+  background: transparent; font-weight: 600; font-size: 16px;
 }
-@keyframes hint-out { to { opacity: 0; visibility: hidden; } }
 
 /* Pauza va yuklanish oynalari */
 .overlay {
@@ -135,12 +138,12 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 
 /* Tor ekran (telefon, tik holat): tugmalar va tezlik yozuvi bir-birining ustiga chiqmasligi uchun */
 @media (max-width: 520px) and (orientation: portrait) {
-  .pad { gap: 10px; }
-  .ctl { width: 74px; height: 74px; }
-  .pad--right { flex-direction: column; align-items: flex-end; }
-  .ctl--gas, .ctl--brake { width: 104px; height: 64px; }
-  .ctl--hand { width: 104px; height: 56px; font-size: 13px; }
-  .speed {
+  body:not(.is-rotated) .pad { gap: 10px; }
+  body:not(.is-rotated) .ctl { width: 74px; height: 74px; }
+  body:not(.is-rotated) .pad--right { flex-direction: column; align-items: flex-end; }
+  body:not(.is-rotated) .ctl--gas, body:not(.is-rotated) .ctl--brake { width: 104px; height: 64px; }
+  body:not(.is-rotated) .ctl--hand { width: 104px; height: 56px; font-size: 13px; }
+  body:not(.is-rotated) .speed {
     left: max(12px, env(safe-area-inset-left));
     bottom: auto;
     top: calc(max(12px, env(safe-area-inset-top)) + 64px);
@@ -163,5 +166,5 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 }
 .open-link:active { transform: translateX(-50%) translateY(2px); box-shadow: 0 2px 0 var(--hazard-shadow); }
 @media (max-width: 520px) and (orientation: portrait) {
-  .open-link { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 92px); }
+  body:not(.is-rotated) .open-link { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 92px); }
 }

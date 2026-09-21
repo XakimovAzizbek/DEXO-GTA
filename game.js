@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CATALOG, HALF, ZONE_SIZE, loadSettings, loadZone, defaultZone, normalizeObject,
+  CATALOG, HALF, ZONE_SIZE, loadSettings, saveSettings, loadZone, defaultZone, normalizeObject,
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
   CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
   makeRamp, groundHeightAt, rampSurfaceNear,
@@ -567,8 +567,62 @@ function updateBillboards(dt) {
 }
 
 // ---------- Hajm va sikl ----------
+// ---------- Yotiq dizayn ----------
+// Telefon tik turganda butun o'yin qatlami (#stage) 90° buriladi: telefonni yon tomonga burib ushlaysiz.
+// Telefon o'zi yotiq holatga o'tsa (avto-aylanish yoki qulflash ishlasa), buralmaydi.
+const stageEl = $('stage');
+const rotateHint = $('rotateHint');
+let rotated = false, hintTimer = 0, hintShown = false;
+
+function stageSize() {
+  return rotated ? { w: innerHeight, h: innerWidth } : { w: innerWidth, h: innerHeight };
+}
+function applyLayout() {
+  const next = settings.landscape !== 'off' && innerHeight > innerWidth;
+  rotated = next;
+  document.body.classList.toggle('is-rotated', next);
+  if (next) {
+    stageEl.style.width = `${innerHeight}px`;
+    stageEl.style.height = `${innerWidth}px`;
+    stageEl.style.transform = settings.landscapeSide === 'ccw'
+      ? `translateY(${innerHeight}px) rotate(-90deg)`
+      : `translateX(${innerWidth}px) rotate(90deg)`;
+    if (!hintShown) {                       // eslatma faqat bir marta, bir necha soniya
+      hintShown = true;
+      rotateHint.hidden = false;
+      hintTimer = setTimeout(() => { rotateHint.hidden = true; }, 7000);
+    }
+  } else {
+    stageEl.style.width = stageEl.style.height = stageEl.style.transform = '';
+    rotateHint.hidden = true;
+  }
+  document.body.classList.toggle('compact', stageSize().h <= 420);
+  $('flipSide2').hidden = !next;
+}
+function flipSide() {
+  settings.landscapeSide = settings.landscapeSide === 'ccw' ? 'cw' : 'ccw';
+  saveSettings(settings);
+  clearTimeout(hintTimer);
+  rotateHint.hidden = true;
+  applyLayout();
+}
+$('flipSide').addEventListener('click', flipSide);
+$('flipSide2').addEventListener('click', flipSide);
+
+// Birinchi bosishda to'liq ekran va yotiq qulflashga urinamiz (Android Chrome'da ishlaydi; ishlamasa majburiy burish qoladi)
+async function tryLandscapeLock() {
+  if (settings.landscape === 'off') return;
+  try {
+    const root = document.documentElement;
+    if (!document.fullscreenElement && root.requestFullscreen) await root.requestFullscreen({ navigationUI: 'hide' });
+    if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+  } catch { /* brauzer ruxsat bermadi */ }
+}
+addEventListener('pointerup', tryLandscapeLock, { once: true });
+
 function resize() {
-  const w = innerWidth, h = innerHeight;
+  applyLayout();
+  const { w, h } = stageSize();
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();

@@ -21,6 +21,7 @@
   </script>
 </head>
 <body>
+  <div id="stage">
   <canvas id="scene"></canvas>
 
   <div class="hud">
@@ -55,13 +56,17 @@
     </div>
   </div>
 
-  <p class="rotate-hint">Telefonni yotiq holatga buring, boshqaruv qulayroq bo‘ladi.</p>
+  <div class="rotate-hint" id="rotateHint" hidden>
+    <p>Telefonni yon tomonga burib ushlang. Teskari chiqsa, tugmani bosing.</p>
+    <button type="button" id="flipSide">Tomonni almashtirish</button>
+  </div>
 
   <div class="overlay" id="pause" hidden>
     <div class="card">
       <h1>Pauza</h1>
       <button class="btn btn--primary" type="button" id="resumeBtn">Davom etish</button>
       <button class="btn btn--ghost" type="button" id="respawnBtn">Mashinani boshiga qaytarish</button>
+      <button class="btn btn--ghost" type="button" id="flipSide2" hidden>Tomonni almashtirish</button>
       <a class="btn btn--ghost" href="index.html">Bosh menyu</a>
     </div>
   </div>
@@ -72,6 +77,7 @@
       <p id="loadingText">Zona tayyorlanmoqda…</p>
       <div class="bar"><div class="bar-fill" id="loadingBar"></div></div>
     </div>
+  </div>
   </div>
 
   <script type="module" src="game.js"></script>

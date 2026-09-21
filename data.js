@@ -27,6 +27,8 @@ export const KEYS = {
 
 export const DEFAULT_SETTINGS = {
   quality: 'medium',     // low | medium | high
+  landscape: 'auto',     // auto | off: telefon tik turganda o'yin ichini 90° buradi
+  landscapeSide: 'cw',   // cw | ccw: qaysi tomonga burilishi (o'yinda "Tomonni almashtirish" bilan o'zgaradi)
   shadows: true,
   cameraDistance: 11,
   sensitivity: 1,
