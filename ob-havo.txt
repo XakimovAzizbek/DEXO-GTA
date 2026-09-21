@@ -8,4 +8,4 @@ shamol: off
 #   kun: off, tun: on  -> tun: qorong'i osmon, oy va yulduzlar, mashina chiroqlari yaltiraydi
 #   kun: on, tun: on   -> quyosh va oy tutilishi (g'alati ob-havo)
 kun: on
-tun: on
+tun: off
