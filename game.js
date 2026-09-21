@@ -9,6 +9,7 @@ import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
 } from './models.js';
 import { createWeather } from './weather.js';
+import { createCarLights } from './lights.js';
 
 const $ = (id) => document.getElementById(id);
 const settings = loadSettings();
@@ -19,7 +20,7 @@ const bounds = normalizeBounds(zone.bounds);   // zona chegarasi: w/e/n/s = mark
 const boundsW = bounds.w + bounds.e, boundsD = bounds.n + bounds.s;
 const boundsCX = (bounds.e - bounds.w) / 2, boundsCZ = (bounds.s - bounds.n) / 2;
 const objects = zone.objects.map(normalizeObject);
-const weatherConfig = await fetchWeather();   // ob-havo.txt: yomg'ir / qor / shamol
+const weatherConfig = await fetchWeather();   // ob-havo.txt: yomg'ir / qor / shamol / kun / tun
 
 // ---------- Renderer ----------
 const canvas = $('scene');
@@ -178,6 +179,16 @@ scene.add(carRoot);
 let carModel = { wheels: [], frontPivots: [] };
 let carProfile = { ...CAR_DEFAULTS };   // tanlangan mashinaning kamera va o'lcham sozlamalari (car.txt)
 
+// Chiroqlar: car.txt dagi "light:" qatorlari (car-editor.html yasaydi). Tugma bilan yoqiladiganlari uchun HUD tugmasi bor.
+let carLights = null;
+let lightsOn = weather.night;             // tunda va tutilishda chiroq avtomatik yoniq boshlanadi
+const lightBtn = $('lightBtn');
+function toggleLights() {
+  lightsOn = !lightsOn;
+  lightBtn.classList.toggle('is-on', lightsOn);
+}
+lightBtn.addEventListener('click', toggleLights);
+
 function useFallbackCar() {
   const built = buildCar();
   carTilt.add(built.group);
@@ -192,6 +203,10 @@ async function setupCar(setText, setProgress) {
   if (entry && useDraft) entry = { ...entry, ...loadCarDraft(entry.name) };   // egasining sinov qoralamasi
   if (entry) {
     carProfile = entry;
+    carLights = createCarLights(entry.lights, { length: entry.length, lift: entry.lift });
+    carTilt.add(carLights.group);
+    lightBtn.hidden = !carLights.hasButton;
+    lightBtn.classList.toggle('is-on', lightsOn);
     setText(`Mashina yuklanmoqda: ${entry.name}…`);
     try {
       const model = await loadCarModel(entry, setProgress);
@@ -386,6 +401,7 @@ const KEYMAP = {
 addEventListener('keydown', (e) => {
   if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
+  else if (e.code === 'KeyL') toggleLights();
   else if (e.code === 'Escape') setPaused(!paused);
 });
 addEventListener('keyup', (e) => { if (KEYMAP[e.code]) input[KEYMAP[e.code]] = false; });
@@ -663,6 +679,14 @@ function frame(now) {
 
     for (const w of carModel.wheels) w.rotation.x += (vf * dt) / 0.38;
     for (const p of carModel.frontPivots) p.rotation.y = -car.steer * 0.5;
+
+    if (carLights) {                          // tormoz / orqaga yurish / tugma chiroqlari
+      carLights.update({
+        brake: (input.brake && vf > 0.5) || input.hand,
+        reverse: vf < -0.3 || (input.brake && vf <= 0.5),
+        button: lightsOn,
+      });
+    }
 
     placeCamera(false, dt);
     sun.position.set(car.x + 40, 70, car.z + 25);

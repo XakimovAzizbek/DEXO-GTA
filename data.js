@@ -93,6 +93,55 @@ export const CAR_DEFAULTS = {
 };
 const CAR_KEYS = Object.keys(CAR_DEFAULTS);
 
+// ---------- Mashina chiroqlari (car-editor.html yasaydi, car.txt ga "light:" qatori bo'lib yoziladi) ----------
+//   light: shape=round func=brake color=#ff2a2a x=0.7 y=0.85 z=-2.2 size=1 mirror=1
+// Koordinatalar mashina uzunligi 4.6 m deb hisoblanadi (uzunlik o'zgarsa chiroqlar birga o'lchanadi).
+// x: chapga(-)/o'ngga(+), y: balandlik, z: orqaga(-)/oldinga(+). mirror=1 bo'lsa qarama-qarshi tomonga ham qo'yiladi.
+export const LIGHT_SHAPES = {
+  round: 'Dumaloq', long: 'Uzunchoq', strip: 'Ingichka chiziq', square: 'Kvadrat',
+  ring: 'Halqa', star: 'Yulduz', triangle: 'Uchburchak',
+};
+export const LIGHT_FUNCS = {
+  brake: 'Tormoz bosilganda',
+  reverse: 'Orqaga yurganda',
+  button: 'Tugma bosilganda',
+};
+export const LIGHT_FUNC_DEFAULTS = {          // vazifa o'zgarganda taklif qilinadigan rang va joy
+  brake:   { color: '#ff2a2a', z: -2.2 },
+  reverse: { color: '#ffffff', z: -2.2 },
+  button:  { color: '#fff2c0', z: 2.2 },
+};
+export const MAX_LIGHTS = 12;
+
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+export function normalizeLight(o) {
+  const src = o || {};
+  const num = (v, def, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def; };
+  const shape = hasOwn(LIGHT_SHAPES, src.shape) ? src.shape : 'round';
+  const func = hasOwn(LIGHT_FUNCS, src.func) ? src.func : 'brake';
+  const color = /^#[0-9a-f]{6}$/i.test(String(src.color)) ? String(src.color).toLowerCase() : LIGHT_FUNC_DEFAULTS[func].color;
+  return {
+    shape, func, color,
+    x: num(src.x, 0.7, -1.6, 1.6),
+    y: num(src.y, 0.85, 0, 2.5),
+    z: num(src.z, LIGHT_FUNC_DEFAULTS[func].z, -4, 4),
+    size: num(src.size, 1, 0.3, 3),
+    mirror: src.mirror === undefined ? 1 : (Number(src.mirror) ? 1 : 0),
+  };
+}
+export function parseLightLine(text) {
+  const obj = {};
+  for (const token of String(text).trim().split(/\s+/)) {
+    const i = token.indexOf('=');
+    if (i > 0) obj[token.slice(0, i).toLowerCase()] = token.slice(i + 1);
+  }
+  return normalizeLight(obj);
+}
+export function serializeLight(l) {
+  const r = (v) => Math.round(v * 1000) / 1000;
+  return `light: shape=${l.shape} func=${l.func} color=${l.color} x=${r(l.x)} y=${r(l.y)} z=${r(l.z)} size=${r(l.size)} mirror=${l.mirror ? 1 : 0}`;
+}
+
 export function parseCarList(text) {
   const cars = [];
   let cur = null;
@@ -103,9 +152,10 @@ export function parseCarList(text) {
     if (!m) continue;
     const key = m[1].toLowerCase();
     const val = m[2].trim();
-    if (key === 'name') { cur = { name: val, file: '', ...CAR_DEFAULTS }; cars.push(cur); }
+    if (key === 'name') { cur = { name: val, file: '', ...CAR_DEFAULTS, lights: [] }; cars.push(cur); }
     else if (!cur) continue;
     else if (key === 'car') cur.file = val;
+    else if (key === 'light') { if (cur.lights.length < MAX_LIGHTS) cur.lights.push(parseLightLine(val)); }
     else if (CAR_KEYS.includes(key)) {
       const n = Number(val);
       cur[key] = Number.isFinite(n) && (key !== 'length' || n > 0) ? n : CAR_DEFAULTS[key];
@@ -122,6 +172,7 @@ export function serializeCarList(cars) {
       const v = Number(c[key]);
       if (Number.isFinite(v) && Math.abs(v - CAR_DEFAULTS[key]) > 1e-9) lines.push(`${key}: ${Math.round(v * 1000) / 1000}`);
     }
+    for (const l of (c.lights || []).slice(0, MAX_LIGHTS)) lines.push(serializeLight(normalizeLight(l)));
     return lines.join('\n');
   }).join('\n\n') + '\n';
 }
@@ -158,6 +209,7 @@ export function loadCarDraft(name) {
     if (!d || typeof d !== 'object') return {};
     const out = {};
     for (const key of CAR_KEYS) if (Number.isFinite(Number(d[key]))) out[key] = Number(d[key]);
+    if (Array.isArray(d.lights)) out.lights = d.lights.slice(0, MAX_LIGHTS).map(normalizeLight);
     return out;
   } catch { return {}; }
 }
@@ -292,10 +344,13 @@ export async function fetchBillboardList() {
 //   yomg‘ir: on
 //   qor: off
 //   shamol: off
+//   kun: on
+//   tun: off
 // "on" bo'lsa yoqiladi, "off" yoki yozilmagan bo'lsa o'chiq. Bir nechtasini birdan yoqsa ham bo'ladi.
+// tun: on -> tun (qorong'i osmon, oy, yulduzlar). kun: on va tun: on birga -> quyosh va oy tutilishi.
 const ON_VALUES = new Set(['on', '1', 'true', 'ha', 'yoqilgan', 'yoqiq']);
 export function parseWeather(text) {
-  const w = { rain: false, snow: false, wind: false };
+  const w = { rain: false, snow: false, wind: false, day: false, night: false };
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
@@ -306,6 +361,8 @@ export function parseWeather(text) {
     if (key === 'yomgir' || key === 'rain') w.rain = on;
     else if (key === 'qor' || key === 'snow') w.snow = on;
     else if (key === 'shamol' || key === 'wind') w.wind = on;
+    else if (key === 'kun' || key === 'day') w.day = on;
+    else if (key === 'tun' || key === 'night') w.night = on;
   }
   return w;
 }
@@ -316,7 +373,7 @@ export async function fetchWeather() {
       if (res.ok) return parseWeather(await res.text());
     } catch { /* keyingi nomni sinaymiz */ }
   }
-  return { rain: false, snow: false, wind: false };
+  return { rain: false, snow: false, wind: false, day: false, night: false };
 }
 
 // ---------- Rampalar (balandlik) ----------

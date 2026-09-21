@@ -61,7 +61,7 @@ body {
   font-weight: 600; font-size: 14px;
 }
 
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
 .tabs button {
   min-height: 42px; border: 2px solid var(--asphalt-line); border-radius: 10px;
   background: var(--asphalt-raise); font-weight: 600;
@@ -117,3 +117,30 @@ body {
   .bar h1 { display: none; }
   .body { max-height: 40vh; }
 }
+
+/* Chiroq bo'limi */
+.light-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.lchip {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 12px;
+  border: 2px solid var(--asphalt-line); border-radius: 10px;
+  background: var(--asphalt-raise); font-weight: 600; font-size: 14px;
+}
+.lchip.is-active { border-color: var(--hazard); background: #323a49; }
+.lchip i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.35); }
+.light-actions { display: flex; gap: 8px; }
+.mini:disabled { opacity: 0.4; }
+.note { color: var(--kerb); font-size: 14px; line-height: 1.35; }
+.light-form { display: grid; gap: 12px; padding: 10px 0; border-top: 1px solid var(--asphalt-line); border-bottom: 1px solid var(--asphalt-line); }
+.field { display: grid; gap: 6px; }
+.field select {
+  min-height: 44px; padding: 0 10px;
+  border: 2px solid var(--kerb); border-radius: 10px;
+  background: var(--asphalt); color: var(--paint); font: inherit;
+}
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.sw { width: 36px; height: 36px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.3); }
+.sw.is-active { border-color: var(--hazard); box-shadow: 0 0 0 2px #14171d inset; }
+.custom-color { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.custom-color input { width: 56px; height: 38px; padding: 0; border: 2px solid var(--kerb); border-radius: 8px; background: transparent; }
+.preview { display: grid; gap: 8px; }

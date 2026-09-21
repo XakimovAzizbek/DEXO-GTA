@@ -46,6 +46,7 @@
     <div class="tabs" role="tablist">
       <button type="button" role="tab" data-tab="camera" class="is-active">Kamera</button>
       <button type="button" role="tab" data-tab="car">Mashina</button>
+      <button type="button" role="tab" data-tab="lights">Chiroq</button>
       <button type="button" role="tab" data-tab="test">Sinov</button>
     </div>
 
@@ -56,6 +57,34 @@
         <div class="row row--flip" id="flipRow">
           <span class="row-label">Oldi va orqa tomon</span>
           <button type="button" class="mini" id="flip">Normal</button>
+        </div>
+      </div>
+
+      <div class="rows" data-tabpanel="lights" hidden>
+        <div class="light-list" id="lightList"></div>
+        <div class="light-actions">
+          <button type="button" class="mini" id="lightAdd">+ Chiroq qo‘shish</button>
+          <button type="button" class="mini mini--danger" id="lightDel" disabled>O‘chirish</button>
+        </div>
+        <p class="note" id="lightEmpty">Bu mashinada chiroq yo‘q. “Chiroq qo‘shish” ni bosing, keyin shakl, rang va joyini tanlang.</p>
+
+        <div class="light-form" id="lightForm" hidden>
+          <label class="field"><span class="row-label">Shakl</span><select id="lShape"></select></label>
+          <label class="field"><span class="row-label">Qachon yonadi</span><select id="lFunc"></select></label>
+          <div class="field">
+            <span class="row-label">Rangi</span>
+            <div class="swatches" id="lSwatches"></div>
+            <label class="custom-color"><span>Boshqa rang:</span><input type="color" id="lColor" aria-label="Boshqa rang tanlash"></label>
+          </div>
+          <div class="rows" id="lightRows"></div>
+          <label class="check"><input type="checkbox" id="lMirror"><span>Ikkala tomonga ham qo‘yish (juft chiroq)</span></label>
+        </div>
+
+        <div class="preview">
+          <span class="row-label">Ko‘rish uchun yoqib qo‘yish:</span>
+          <label class="check"><input type="checkbox" id="pvBrake" checked><span>Tormoz bosilgan</span></label>
+          <label class="check"><input type="checkbox" id="pvReverse" checked><span>Orqaga yurish</span></label>
+          <label class="check"><input type="checkbox" id="pvButton" checked><span>Chiroq tugmasi bosilgan</span></label>
         </div>
       </div>
 

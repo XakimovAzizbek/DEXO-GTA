@@ -2,11 +2,13 @@ import * as THREE from 'three';
 import {
   CAR_DEFAULTS, cameraPose, fetchCarList, loadSelectedCarName, saveSelectedCarName,
   loadCarDraft, saveCarDraft, serializeCarList,
+  LIGHT_SHAPES, LIGHT_FUNCS, LIGHT_FUNC_DEFAULTS, MAX_LIGHTS, normalizeLight,
 } from './data.js';
 import {
   getGeometry, getMaterial, makeEnvironment, loadCarScene, fitCarModel, disposeModel,
 } from './models.js';
 import { showSaveDialog } from './savefile.js';
+import { createCarLights } from './lights.js';
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -73,6 +75,10 @@ let carEntry = null;          // { name, file } hozir tahrirlanayotgan mashina
 let modelScene = null;        // yuklangan GLB
 let fitted = null;            // o'lchamlangan model
 let loadToken = 0;
+let lights = [];              // tahrirlanayotgan mashinaning chiroqlari
+let selLight = -1;            // tanlangan chiroq raqami
+let lightsObj = null;         // sahnadagi chiroqlar (lights.js)
+const lightPreview = { brake: true, reverse: true, button: true };   // ko'rish uchun yoqib qo'yiladiganlar
 
 let toastTimer = 0;
 function toast(text, ms = 2200) {
@@ -163,7 +169,7 @@ function setValue(def, v) {
   const r = rows.get(def.key);
   r.input.value = v;
   r.output.textContent = fmt(def, v);
-  if (def.key === 'length' || def.key === 'lift') refit();
+  if (def.key === 'length' || def.key === 'lift') { refit(); rebuildLights(); }
   if (!def.test) saveDraftSoon();
 }
 
@@ -196,6 +202,137 @@ $('reset').addEventListener('click', () => {
   saveDraftSoon();
 });
 
+// ---------- Chiroqlar ----------
+const LIGHT_ROWS = [
+  { key: 'x', label: 'Chapga ↔ o‘ngga', min: -1.6, max: 1.6, step: 0.02, unit: 'm' },
+  { key: 'y', label: 'Balandligi', min: 0, max: 2.5, step: 0.02, unit: 'm' },
+  { key: 'z', label: 'Orqaga ↔ oldinga', min: -4, max: 4, step: 0.02, unit: 'm' },
+  { key: 'size', label: 'Kattaligi', min: 0.3, max: 3, step: 0.05, unit: '×' },
+];
+const SWATCHES = ['#ff2a2a', '#ffffff', '#fff2c0', '#ffc933', '#ff8a1f', '#2f7dff', '#9fe7ff', '#2fe07a', '#b04cff', '#ff4fa3'];
+const FUNC_SHORT = { brake: 'Tormoz', reverse: 'Orqaga', button: 'Tugma' };
+const lightRowEls = new Map();
+const curLight = () => (selLight >= 0 ? lights[selLight] : null);
+
+for (const [v, label] of Object.entries(LIGHT_SHAPES)) $('lShape').append(new Option(label, v));
+for (const [v, label] of Object.entries(LIGHT_FUNCS)) $('lFunc').append(new Option(label, v));
+for (const color of SWATCHES) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'sw';
+  b.style.background = color;
+  b.setAttribute('aria-label', `Rang ${color}`);
+  b.addEventListener('click', () => { const l = curLight(); if (l) { l.color = color; changeLight(); } });
+  $('lSwatches').append(b);
+}
+
+function rebuildLights() {
+  if (lightsObj) { carTilt.remove(lightsObj.group); lightsObj.dispose(); }
+  lightsObj = createCarLights(lights, { length: profile.length, lift: profile.lift });
+  carTilt.add(lightsObj.group);
+  lightsObj.update(lightPreview);
+}
+
+const fmtLight = (def, v) => `${Number(v).toFixed(def.step < 0.1 ? 2 : 1)} ${def.unit}`;
+function buildLightRow(def) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const head = document.createElement('div');
+  head.className = 'row-head';
+  const label = document.createElement('span');
+  label.className = 'row-label';
+  label.textContent = def.label;
+  const output = document.createElement('output');
+  output.className = 'row-value';
+  head.append(label, output);
+  const ctl = document.createElement('div');
+  ctl.className = 'row-ctl';
+  const minus = document.createElement('button');
+  minus.type = 'button'; minus.className = 'step'; minus.textContent = '−'; minus.setAttribute('aria-label', `${def.label}: kamaytirish`);
+  const plus = document.createElement('button');
+  plus.type = 'button'; plus.className = 'step'; plus.textContent = '+'; plus.setAttribute('aria-label', `${def.label}: oshirish`);
+  const input = document.createElement('input');
+  input.type = 'range'; input.min = def.min; input.max = def.max; input.step = def.step;
+  input.setAttribute('aria-label', def.label);
+  ctl.append(minus, input, plus);
+  row.append(head, ctl);
+
+  const apply = (v) => {
+    const l = curLight();
+    if (!l) return;
+    l[def.key] = clamp(Math.round(v / def.step) * def.step, def.min, def.max);
+    input.value = l[def.key];
+    output.textContent = fmtLight(def, l[def.key]);
+    rebuildLights();
+    saveDraftSoon();
+  };
+  input.addEventListener('input', () => apply(Number(input.value)));
+  minus.addEventListener('click', () => { const l = curLight(); if (l) apply(l[def.key] - def.step); });
+  plus.addEventListener('click', () => { const l = curLight(); if (l) apply(l[def.key] + def.step); });
+  lightRowEls.set(def.key, { def, input, output });
+  $('lightRows').append(row);
+}
+LIGHT_ROWS.forEach(buildLightRow);
+
+function renderLightUI() {
+  const list = $('lightList');
+  list.textContent = '';
+  lights.forEach((l, i) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'lchip' + (i === selLight ? ' is-active' : '');
+    const dot = document.createElement('i');
+    dot.style.background = l.color;
+    chip.append(dot, document.createTextNode(`${i + 1}. ${LIGHT_SHAPES[l.shape]} · ${FUNC_SHORT[l.func]}`));
+    chip.addEventListener('click', () => { selLight = i; renderLightUI(); });
+    list.append(chip);
+  });
+  const l = curLight();
+  $('lightForm').hidden = !l;
+  $('lightEmpty').hidden = lights.length > 0;
+  $('lightDel').disabled = !l;
+  if (!l) return;
+  $('lShape').value = l.shape;
+  $('lFunc').value = l.func;
+  $('lColor').value = l.color;
+  $('lMirror').checked = !!l.mirror;
+  for (const { def, input, output } of lightRowEls.values()) { input.value = l[def.key]; output.textContent = fmtLight(def, l[def.key]); }
+  [...$('lSwatches').children].forEach((b, i) => b.classList.toggle('is-active', SWATCHES[i] === l.color));
+}
+function changeLight() {
+  rebuildLights();
+  renderLightUI();
+  saveDraftSoon();
+}
+
+$('lightAdd').addEventListener('click', () => {
+  if (lights.length >= MAX_LIGHTS) { toast(`Eng ko‘pi bilan ${MAX_LIGHTS} ta chiroq`); return; }
+  lights.push(normalizeLight({}));
+  selLight = lights.length - 1;
+  changeLight();
+});
+$('lightDel').addEventListener('click', () => {
+  if (selLight < 0) return;
+  lights.splice(selLight, 1);
+  selLight = Math.min(selLight, lights.length - 1);
+  changeLight();
+});
+$('lShape').addEventListener('change', (e) => { const l = curLight(); if (l) { l.shape = e.target.value; changeLight(); } });
+$('lFunc').addEventListener('change', (e) => {
+  const l = curLight();
+  if (!l) return;
+  const old = LIGHT_FUNC_DEFAULTS[l.func], next = LIGHT_FUNC_DEFAULTS[e.target.value];
+  if (l.color === old.color) l.color = next.color;          // tegilmagan rang va joy yangi vazifaga mos taklif qilinadi
+  if (Math.abs(l.z - old.z) < 0.01) l.z = next.z;
+  l.func = e.target.value;
+  changeLight();
+});
+$('lColor').addEventListener('input', (e) => { const l = curLight(); if (l) { l.color = e.target.value.toLowerCase(); rebuildLights(); saveDraftSoon(); renderLightUI(); } });
+$('lMirror').addEventListener('change', (e) => { const l = curLight(); if (l) { l.mirror = e.target.checked ? 1 : 0; changeLight(); } });
+for (const [id, key] of [['pvBrake', 'brake'], ['pvReverse', 'reverse'], ['pvButton', 'button']]) {
+  $(id).addEventListener('change', (e) => { lightPreview[key] = e.target.checked; if (lightsObj) lightsObj.update(lightPreview); });
+}
+
 // ---------- Model ----------
 function refit() {
   if (!modelScene) return;
@@ -207,7 +344,12 @@ function refit() {
 async function selectCar(entry) {
   const token = ++loadToken;
   carEntry = entry;
-  Object.assign(profile, CAR_DEFAULTS, pickProfile(entry), loadCarDraft(entry.name));
+  const { lights: draftLights, ...draftNums } = loadCarDraft(entry.name);
+  Object.assign(profile, CAR_DEFAULTS, pickProfile(entry), draftNums);
+  lights = (draftLights || entry.lights || []).map((l) => ({ ...l }));
+  selLight = lights.length ? 0 : -1;
+  rebuildLights();
+  renderLightUI();
   syncControls();
   document.querySelectorAll('#cars .chip').forEach((c) => c.classList.toggle('is-active', c.dataset.name === entry.name));
 
@@ -234,7 +376,7 @@ async function selectCar(entry) {
 let draftTimer = 0;
 function saveDraftNow() {
   clearTimeout(draftTimer);
-  if (carEntry) saveCarDraft(carEntry.name, pickProfile(profile));
+  if (carEntry) saveCarDraft(carEntry.name, { ...pickProfile(profile), lights });
 }
 function saveDraftSoon() {
   clearTimeout(draftTimer);
@@ -253,7 +395,7 @@ $('test').addEventListener('click', () => {
 let allCars = [];
 function saveCarFile() {
   if (!carEntry) return;
-  Object.assign(carEntry, pickProfile(profile));          // carEntry allCars ichidagi yozuv
+  Object.assign(carEntry, pickProfile(profile), { lights: lights.map((l) => ({ ...l })) });   // carEntry allCars ichidagi yozuv
   showSaveDialog({ name: 'car.txt', text: serializeCarList(allCars), type: 'text/plain', steps: [
     'GitHub’da omboringizni oching va car.txt faylini tanlang.',
     'Qalam belgisini (Edit) bosing, ichidagi hamma matnni o‘chiring va nusxalangan matnni yopishtiring.',
