@@ -11,6 +11,8 @@ follow: 15
 light: shape=strip func=brake color=#ff2a2a x=1.02 y=0.96 z=-2.28 size=0.8 mirror=0
 light: shape=round func=button color=#ffffff x=0.46 y=0.62 z=2.12 size=1 mirror=0
 light: shape=round func=button color=#ffffff x=1.6 y=0.52 z=2.2 size=1 mirror=0
+light: shape=round func=reverse color=#ffffff x=0.5 y=0.92 z=-2.22 size=0.4 mirror=0
+light: shape=round func=reverse color=#ffffff x=1.52 y=0.92 z=-2.22 size=0.4 mirror=0
 
 name: NEXIA 2
 car: nexia2.glb
