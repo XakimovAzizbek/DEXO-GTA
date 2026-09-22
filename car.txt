@@ -58,4 +58,4 @@ camdist: 9
 camheight: 4.5
 aimy: 4
 fov: 71
-light: shape=round func=brake color=#ff2a2a x=0.62 y=1.08 z=-2.12 size=0.65 mirror=1
+light: shape=round func=brake color=#ff2a2a x=0.6 y=1.08 z=-2.1 size=0.8 mirror=1
