@@ -49,3 +49,13 @@ fov: 54
 fovspeed: 0.05
 follow: 20
 tilt: 2.5
+
+name: chevrolet traverse
+car: 2023_chevrolet_traverse_rs.glb
+length: 6.3
+carz: -6
+camdist: 9
+camheight: 4.5
+aimy: 4
+fov: 71
+light: shape=round func=brake color=#ff2a2a x=0.62 y=1.08 z=-2.12 size=0.65 mirror=1
