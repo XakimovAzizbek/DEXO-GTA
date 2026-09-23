@@ -73,30 +73,22 @@ export async function fetchSharedZone() {
 }
 
 // ---------- Mashinalar: car.txt ----------
-// Format (har bir mashina "name:" qatoridan boshlanadi):
-//   name: bmw
-//   car: bmwM5.glb
-// Qolgan qatorlar ixtiyoriy (car-editor.html yozadi), yozilmasa CAR_DEFAULTS ishlatiladi.
 export const CAR_DEFAULTS = {
-  length: 4.6,       // mashina uzunligi, metr (kattaligi)
-  rotate: 0,         // 0 yoki 180: old va orqa tomonni almashtirish
-  lift: 0,           // yerdan balandligi, metr
-  carx: 0,           // mashina ekranda chapga(-) / o'ngga(+), metr
-  carz: 0,           // mashina ekranda orqaga(-) / oldinga(+), metr
-  camdist: 11,       // kamera masofasi, metr
-  camheight: 5.72,   // kamera balandligi, metr
-  aimy: 1.4,         // kamera nishon balandligi, metr
-  fov: 60,           // ko'rish burchagi, daraja
-  fovspeed: 0.35,    // tezlikda ko'rish burchagi kengayishi
-  follow: 8,         // kamera ergashish tezligi
-  tilt: 1,           // engashish kuchi (tormoz va burilishda)
+  length: 4.6,
+  rotate: 0,
+  lift: 0,
+  carx: 0,
+  carz: 0,
+  camdist: 11,
+  camheight: 5.72,
+  aimy: 1.4,
+  fov: 60,
+  fovspeed: 0.35,
+  follow: 8,
+  tilt: 1,
 };
 const CAR_KEYS = Object.keys(CAR_DEFAULTS);
 
-// ---------- Mashina chiroqlari (car-editor.html yasaydi, car.txt ga "light:" qatori bo'lib yoziladi) ----------
-//   light: shape=round func=brake color=#ff2a2a x=0.7 y=0.85 z=-2.2 size=1 mirror=1
-// Koordinatalar mashina uzunligi 4.6 m deb hisoblanadi (uzunlik o'zgarsa chiroqlar birga o'lchanadi).
-// x: chapga(-)/o'ngga(+), y: balandlik, z: orqaga(-)/oldinga(+). mirror=1 bo'lsa qarama-qarshi tomonga ham qo'yiladi.
 export const LIGHT_SHAPES = {
   round: 'Dumaloq', long: 'Uzunchoq', strip: 'Ingichka chiziq', square: 'Kvadrat',
   ring: 'Halqa', star: 'Yulduz', triangle: 'Uchburchak',
@@ -106,7 +98,7 @@ export const LIGHT_FUNCS = {
   reverse: 'Orqaga yurganda',
   button: 'Tugma bosilganda',
 };
-export const LIGHT_FUNC_DEFAULTS = {          // vazifa o'zgarganda taklif qilinadigan rang va joy
+export const LIGHT_FUNC_DEFAULTS = {
   brake:   { color: '#ff2a2a', z: -2.2 },
   reverse: { color: '#ffffff', z: -2.2 },
   button:  { color: '#fff2c0', z: 2.2 },
@@ -164,7 +156,6 @@ export function parseCarList(text) {
   return cars.filter((c) => c.name && c.file);
 }
 
-// Ro'yxatni car.txt matniga qaytaradi (faqat standartdan farq qiladigan qiymatlar yoziladi)
 export function serializeCarList(cars) {
   return cars.map((c) => {
     const lines = [`name: ${c.name}`, `car: ${c.file}`];
@@ -185,16 +176,13 @@ export async function fetchCarList() {
   } catch { return []; }
 }
 
-// Kamera holati: o'yin (game.js) va car-editor.js aynan shu funksiyadan foydalanadi,
-// shuning uchun editordagi ko'rinish o'yindagi bilan bir xil bo'ladi.
-// distOffset: o'yinchi sozlamalaridagi kamera masofasi - 11.
 export function cameraPose(p, carX, carZ, heading, speed, distOffset = 0) {
   const dist = p.camdist + distOffset;
   const height = Math.max(1.6, p.camheight + distOffset * 0.32);
-  const fx = Math.sin(heading), fz = Math.cos(heading);      // oldinga
-  const rx = -Math.cos(heading), rz = Math.sin(heading);     // mashinaning o'ng tomoni (ekranda ham o'ng)
-  const side = -p.carx;                                       // kamera chapga = mashina ekranda o'ngga
-  const ahead = 4 - p.carz;                                   // nishon nuqtasi mashina oldida
+  const fx = Math.sin(heading), fz = Math.cos(heading);
+  const rx = -Math.cos(heading), rz = Math.sin(heading);
+  const side = -p.carx;
+  const ahead = 4 - p.carz;
   return {
     px: carX - fx * dist + rx * side, py: height, pz: carZ - fz * dist + rz * side,
     lx: carX + fx * ahead + rx * side, ly: p.aimy, lz: carZ + fz * ahead + rz * side,
@@ -202,7 +190,6 @@ export function cameraPose(p, carX, carZ, heading, speed, distOffset = 0) {
   };
 }
 
-// Egasining qoralamasi (faqat o'z qurilmasida; game.html?draft=1 sinash uchun)
 export function loadCarDraft(name) {
   try {
     const d = JSON.parse(localStorage.getItem(KEYS.carDraft + name));
@@ -217,7 +204,6 @@ export function saveCarDraft(name, profile) {
   try { localStorage.setItem(KEYS.carDraft + name, JSON.stringify(profile)); return true; } catch { return false; }
 }
 
-// Tanlangan mashina: faqat nomi saqlanadi, qolganini car.txt beradi
 export function loadSelectedCarName() {
   try { return localStorage.getItem(KEYS.car) || ''; } catch { return ''; }
 }
@@ -226,7 +212,6 @@ export function saveSelectedCarName(name) {
 }
 
 // ---------- Katalog ----------
-// hw/hd: poydevorning yarim eni/uzunligi (metr). Old tomon = modelning +z tomoni.
 export const CATALOG = {
   house_small:   { label: 'Kichik uy',         group: 'Uylar',     kind: 'house', hw: 4,  hd: 4 },
   house_two:     { label: 'Ikki qavatli uy',   group: 'Uylar',     kind: 'house', hw: 5,  hd: 4.5 },
@@ -248,9 +233,10 @@ export const CATALOG = {
   land_dirt:     { label: 'Tuproq maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
   land_asphalt:  { label: 'Asfalt maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
   billboard:     { label: 'Reklama ekrani',    group: 'Reklama',   kind: 'billboard', hw: 1.1, hd: 0.8 },
+  route_point:   { label: 'Marshrut nuqtasi',  group: 'Marshrut',  kind: 'route' },
   spawn:         { label: 'Boshlanish nuqtasi', group: 'Belgi',    kind: 'spawn' },
 };
-export const GROUPS = ['Uylar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Rampa', 'Reklama', 'Belgi'];
+export const GROUPS = ['Uylar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Rampa', 'Reklama', 'Marshrut', 'Belgi'];
 
 // Har bir obyektga tasodifiy och rang berish uchun (asl ranglarga ko'paytiriladi).
 export const TINTS = {
@@ -261,7 +247,8 @@ export const TINTS = {
   mountain: ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
   ridge:    ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
   land:     ['#ffffff'],
-  billboard: Array.from({ length: 10 }, () => '#ffffff'),   // c = reklama tartib raqami (billboard.txt)
+  billboard: Array.from({ length: 10 }, () => '#ffffff'),
+  route:    ['#ff5252', '#4b7bec', '#f7b731', '#20bf6b', '#a55eea', '#fd9644', '#26de81', '#fc5c65', '#45aaf2', '#eb3b5a', '#8854d0', '#3867d6'],
   spawn: ['#ffffff'],
 };
 export function randomTint(type, rnd = Math.random) {
@@ -277,7 +264,6 @@ export function isValidZone(z) {
     z.objects.every(o => o && hasType(o.t) && Number.isFinite(+o.x) && Number.isFinite(+o.z));
 }
 
-// Rampa balandligi (y) 3 m qadam bilan: 0, 3, 6 ... 30. Rampa kattalashtirilmaydi (nishab va balandlik buzilmasin).
 export const RAMP_STEP = 3;
 export const RAMP_MAX = 30;
 export function normalizeObject(o) {
@@ -294,18 +280,14 @@ export function normalizeObject(o) {
     c: Math.abs(Math.floor(Number(o.c) || 0)) % tints,
   };
   if (kind === 'ramp') {
-    const min = def.rise === 0 ? RAMP_STEP : 0;     // "Baland yo'l" yerdan kamida 3 m balandda
+    const min = def.rise === 0 ? RAMP_STEP : 0;
     out.y = Math.min(RAMP_MAX, Math.max(min, Math.round((Number(o.y) || 0) / RAMP_STEP) * RAMP_STEP));
   }
   return out;
 }
 
 // ---------- Reklama ekranlari: billboard.txt ----------
-// Format (har bir reklama "video:" qatoridan boshlanadi):
-//   video: https://.../reklama.mp4      (yoki ombordagi fayl: ads/reklama.mp4)
-//   button: https://...                 ("Open" tugmasi ochadigan havola)
-// Faqat http/https havolalar qabul qilinadi.
-export const BILLBOARD_SCREEN = { w: 12, h: 6, y: 12.5, z: 0.43 };   // ekran o'lchami (metr), balandligi va old tomondan masofasi
+export const BILLBOARD_SCREEN = { w: 12, h: 6, y: 12.5, z: 0.43 };
 
 function safeUrl(value) {
   try {
@@ -330,7 +312,7 @@ export function parseBillboardList(text) {
   return ads;
 }
 export async function fetchBillboardList() {
-  for (const file of ['billboard.txt', 'billiboard.txt']) {     // ikkinchi yozuv: fayl nomi xato qo'yilgan bo'lsa ham topiladi
+  for (const file of ['billboard.txt', 'billiboard.txt']) {
     try {
       const res = await fetch(file, { cache: 'no-store' });
       if (res.ok) return parseBillboardList(await res.text());
@@ -340,14 +322,6 @@ export async function fetchBillboardList() {
 }
 
 // ---------- Ob-havo: ob-havo.txt ----------
-// Format (har qatorda bittadan):
-//   yomg‘ir: on
-//   qor: off
-//   shamol: off
-//   kun: on
-//   tun: off
-// "on" bo'lsa yoqiladi, "off" yoki yozilmagan bo'lsa o'chiq. Bir nechtasini birdan yoqsa ham bo'ladi.
-// tun: on -> tun (qorong'i osmon, oy, yulduzlar). kun: on va tun: on birga -> quyosh va oy tutilishi.
 const ON_VALUES = new Set(['on', '1', 'true', 'ha', 'yoqilgan', 'yoqiq']);
 export function parseWeather(text) {
   const w = { rain: false, snow: false, wind: false, day: false, night: false };
@@ -356,7 +330,7 @@ export function parseWeather(text) {
     if (!line || line.startsWith('#')) continue;
     const m = line.match(/^([^:]+):\s*(.*)$/);
     if (!m) continue;
-    const key = m[1].toLowerCase().replace(/[^a-z]/g, '');   // yomg‘ir, yomg'ir, yomgʻir -> yomgir
+    const key = m[1].toLowerCase().replace(/[^a-z]/g, '');
     const on = ON_VALUES.has(m[2].trim().toLowerCase());
     if (key === 'yomgir' || key === 'rain') w.rain = on;
     else if (key === 'qor' || key === 'snow') w.snow = on;
@@ -367,7 +341,7 @@ export function parseWeather(text) {
   return w;
 }
 export async function fetchWeather() {
-  for (const file of ['ob-havo.txt', 'obhavo.txt']) {     // ikkinchi yozuv: fayl nomi xato qo'yilgan bo'lsa ham topiladi
+  for (const file of ['ob-havo.txt', 'obhavo.txt']) {
     try {
       const res = await fetch(file, { cache: 'no-store' });
       if (res.ok) return parseWeather(await res.text());
@@ -376,8 +350,192 @@ export async function fetchWeather() {
   return { rain: false, snow: false, wind: false, day: false, night: false };
 }
 
+// ---------- Botlar: bot-car.txt ----------
+export const DEFAULT_BOT_CFG = {
+  count: 0,
+  speedKmh: 60,
+  patience: 20,
+  razgon: true,
+  bans: new Set(),
+};
+export async function fetchBotConfig() {
+  const cfg = { count: 0, speedKmh: 60, patience: 20, razgon: true, bans: new Set() };
+  try {
+    const res = await fetch('bot-car.txt', { cache: 'no-store' });
+    if (!res.ok) return cfg;
+    for (const raw of (await res.text()).split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const m = line.match(/^([A-Za-z_]+)\s*:\s*(.+)$/);
+      if (!m) continue;
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      if (key === 'botlar') cfg.count = Math.max(0, Math.min(400, Math.round(Number(val) || 0)));   // jami havzadagi bot soni (ekranga chiqadigani botFleet.js da qat'iy chegaralanadi)
+      else if (key === 'tezlik') cfg.speedKmh = Math.max(20, Math.min(120, Number(val) || 60));
+      else if (key === 'sabr') cfg.patience = Math.max(5, Math.min(60, Number(val) || 20));
+      else if (key === 'razgon') cfg.razgon = ON_VALUES.has(val.toLowerCase());
+      else if (key === 'bot_ban') cfg.bans.add(val.toLowerCase());
+    }
+  } catch { /* fayl yo'q */ }
+  return cfg;
+}
+
+// ---------- Marshrutlar (botlar uchun) ----------
+// route_point obyektlari bir xil "c" (rang/tartib) bo'yicha guruhlanadi.
+// Har bir guruhda kamida 3 ta nuqta bo'lsa, undan yopiq halqa marshrut quriladi.
+export const LANE_OFFSET = 3;    // yo'l markazidan o'ng polosagacha masofa, metr
+
+export function buildRoutes(objects) {
+  const groups = new Map();
+  for (const o of objects) {
+    if (o.t !== 'route_point') continue;
+    const key = o.c || 0;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  }
+  const routes = [];
+  for (const [c, pts] of groups) {
+    if (pts.length < 3) continue;
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      const dx = b.x - a.x, dz = b.z - a.z;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.001) continue;
+      segs.push({ a, b, dx, dz, len, dirx: dx / len, dirz: dz / len });
+      total += len;
+    }
+    if (segs.length < 3) continue;
+    routes.push({ c, points: pts, segs, total });
+  }
+  return routes;
+}
+
+export function pointOnRoute(route, s) {
+  if (!route.segs.length) return { x: 0, z: 0, dirx: 0, dirz: 1 };
+  let t = ((s % route.total) + route.total) % route.total;
+  for (const seg of route.segs) {
+    if (t <= seg.len) {
+      const k = t / seg.len;
+      return {
+        x: seg.a.x + seg.dx * k,
+        z: seg.a.z + seg.dz * k,
+        dirx: seg.dirx,
+        dirz: seg.dirz,
+      };
+    }
+    t -= seg.len;
+  }
+  const last = route.segs[route.segs.length - 1];
+  return { x: last.b.x, z: last.b.z, dirx: last.dirx, dirz: last.dirz };
+}
+
+// Botlarni boshqarish: marshrut bo'ylab yuradi, to'siqni ko'rsa sekinlashadi,
+// sabri tugasa chap polosaga chiqib oldinlab o'tadi, uzoq tiqilsa keyingi nuqtaga sakraydi.
+export function stepBot(bot, route, objects, obstacles, dt, cfg) {
+  const fx = bot.dirx, fz = bot.dirz;
+  const rx = -fz, rz = fx;
+  const lookAhead = 6 + bot.speed * 1.5;
+
+  // Oldindagi to'siqni aniqlash
+  let blocker = null;
+  let blockerDist = Infinity;
+  for (const o of obstacles) {
+    const dx = o.x - bot.x, dz = o.z - bot.z;
+    const along = dx * fx + dz * fz;
+    if (along < 0.5 || along > lookAhead) continue;
+    const lat = Math.abs(dx * rx + dz * rz);
+    if (lat > 2.5) continue;
+    if (along < blockerDist) { blockerDist = along; blocker = o; }
+  }
+
+  // Yon tomon (chap polosa) bo'shligini tekshirish
+  let sideClear = true;
+  const sideAhead = 7;
+  const sideX = bot.x + fx * sideAhead - rx * LANE_OFFSET * 2.5;
+  const sideZ = bot.z + fz * sideAhead - rz * LANE_OFFSET * 2.5;
+  for (const o of objects) {
+    const def = CATALOG[o.t];
+    if (!def) continue;
+    const k = def.kind;
+    if (k !== 'house' && k !== 'mountain' && k !== 'tree' && k !== 'ridge' && k !== 'billboard') continue;
+    const dx = o.x - sideX, dz = o.z - sideZ;
+    const reach = (def.r || Math.max(def.hw || 0, def.hd || 0)) * o.s + 2;
+    if (dx * dx + dz * dz < reach * reach) { sideClear = false; break; }
+  }
+
+  // Sabr vaqti
+  if (blocker) bot.waitTimer += dt;
+  else bot.waitTimer = Math.max(0, bot.waitTimer - dt * 3);
+
+  // O'tishga qaror
+  const canStart = cfg.razgon && !bot.overtaking && bot.waitTimer > cfg.patience && sideClear && bot.speed > 3;
+  if (canStart) {
+    bot.overtaking = true;
+    bot.overtakeTimer = 0;
+    bot.lateralTarget = -LANE_OFFSET * 1.9;
+  }
+  if (bot.overtaking) {
+    bot.overtakeTimer = (bot.overtakeTimer || 0) + dt;
+    if (!blocker && bot.overtakeTimer > 1.5) {
+      bot.lateralTarget = LANE_OFFSET;
+      if (Math.abs(bot.lateral - LANE_OFFSET) < 0.4) {
+        bot.overtaking = false;
+        bot.waitTimer = 0;
+      }
+    }
+    if (bot.overtakeTimer > 8) {
+      bot.lateralTarget = LANE_OFFSET;
+      if (Math.abs(bot.lateral - LANE_OFFSET) < 0.4) bot.overtaking = false;
+    }
+  }
+
+  // Lateral silliq harakat
+  bot.lateral += (bot.lateralTarget - bot.lateral) * Math.min(1, dt * 2.5);
+
+  // Tezlikni boshqarish
+  const baseSpeed = (cfg.speedKmh / 3.6);
+  const maxSpeed = baseSpeed * 1.35;
+  let target;
+  if (bot.overtaking) target = maxSpeed;
+  else if (blocker && blockerDist < 12) target = Math.max(1.5, (blocker.speed || 0) * 0.85);
+  else target = baseSpeed;
+
+  const accel = bot.overtaking ? 10 : 4;
+  const brake = 12;
+  if (bot.speed < target) bot.speed = Math.min(target, bot.speed + accel * dt);
+  else bot.speed = Math.max(target, bot.speed - brake * dt);
+  bot.speed = Math.max(0, Math.min(bot.speed, maxSpeed));
+
+  const braking = !!blocker && blockerDist < 10 && bot.speed > 1;
+
+  // Marshrut bo'ylab harakat
+  bot.s += bot.speed * dt;
+  const pos = pointOnRoute(route, bot.s);
+  const prx = -pos.dirz, prz = pos.dirx;
+  bot.x = pos.x + prx * bot.lateral;
+  bot.z = pos.z + prz * bot.lateral;
+  bot.dirx = pos.dirx;
+  bot.dirz = pos.dirz;
+
+  // Uzoq tiqilib qolsa: marshrutning keyingi qismiga sakrash
+  if (bot.waitTimer > 60) {
+    const jump = pointOnRoute(route, bot.s + 25);
+    bot.x = jump.x; bot.z = jump.z;
+    bot.s += 25;
+    bot.waitTimer = 0;
+    bot.overtaking = false;
+    bot.overtakeTimer = 0;
+    bot.lateral = LANE_OFFSET;
+    bot.lateralTarget = LANE_OFFSET;
+  }
+
+  return { dirx: pos.dirx, dirz: pos.dirz, braking };
+}
+
 // ---------- Rampalar (balandlik) ----------
-// Rampa: eni 12 m, uzunligi 24 m. Yuqori uchi = modelning +z tomoni. y = past uchining balandligi.
 export function makeRamp(o) {
   const def = CATALOG[o.t];
   if (!def || def.kind !== 'ramp') return null;
@@ -387,7 +545,6 @@ export function makeRamp(o) {
     base: o.y || 0, rise: def.rise, reach2: reach * reach,
   };
 }
-// Nuqtadagi sirt balandligi; nuqta rampa ichida bo'lmasa null
 export function rampSurface(r, x, z) {
   const dx = x - r.x, dz = z - r.z;
   const lx = dx * r.cos - dz * r.sin;
@@ -395,7 +552,6 @@ export function rampSurface(r, x, z) {
   if (Math.abs(lx) > r.hw || Math.abs(lz) > r.hd) return null;
   return r.base + (r.rise * (lz + r.hd)) / (2 * r.hd);
 }
-// Nuqtaga eng yaqin rampa nuqtasidagi sirt balandligi (devorga urilishni aniqlash uchun)
 export function rampSurfaceNear(r, x, z) {
   const dx = x - r.x, dz = z - r.z;
   const lz = Math.max(-r.hd, Math.min(r.hd, dx * r.sin + dz * r.cos));
@@ -413,11 +569,9 @@ export function groundHeightAt(ramps, x, z) {
 }
 
 // ---------- Toqnashuv ----------
-// Aylanish: three.js dagi rotation.y = r bilan bir xil.
-// local -> world: wx = lx*cos + lz*sin, wz = -lx*sin + lz*cos
 export function makeFootprint(o) {
   const def = CATALOG[o.t];
-  if (!def || def.kind === 'spawn') return null;
+  if (!def || def.kind === 'spawn' || def.kind === 'route') return null;
   if (def.kind === 'tree' || def.kind === 'mountain') {
     const r = def.r * o.s;
     return { shape: 'circle', solid: true, x: o.x, z: o.z, r, reach2: (r + 3) * (r + 3) };
@@ -434,7 +588,6 @@ export function makeCollider(o) {
   return f && f.solid ? f : null;
 }
 
-// Doira (cx,cz,rad) va to'siq kesishsa {nx,nz,pen} qaytaradi: (nx,nz) doirani to'siqdan itarish yo'nalishi.
 export function collideCircle(col, cx, cz, rad) {
   if (col.shape === 'circle') {
     const dx = cx - col.x, dz = cz - col.z;
@@ -495,7 +648,6 @@ export function defaultZone() {
   }
 
   const kinds = ['house_small', 'house_two', 'shop', 'house_small', 'house_two'];
-  // Bosh yo'l (z o'qi) bo'ylab uylar, old tomoni yo'lga qaragan
   for (let k = 0; k < 5; k++) {
     const t = kinds[k], hd = CATALOG[t].hd;
     const z = 24 + k * 18;
@@ -504,7 +656,6 @@ export function defaultZone() {
       add(kinds[(k + 2) % 5], -(9 + CATALOG[kinds[(k + 2) % 5]].hd), sz * z, Math.PI / 2);
     }
   }
-  // Ko'ndalang yo'l (x o'qi) bo'ylab uylar
   for (let k = 0; k < 4; k++) {
     const t = kinds[(k + 1) % 5], hd = CATALOG[t].hd;
     const x = 44 + k * 18;
@@ -516,7 +667,6 @@ export function defaultZone() {
   add('tower', 46, 46);
   add('tower', -46, -46);
 
-  // Daraxtlar: yo'l va uylardan uzoqroq joylarga
   const feet = list.map(makeFootprint).filter(Boolean);
   let tries = 0, planted = 0;
   while (planted < 70 && tries < 1500) {

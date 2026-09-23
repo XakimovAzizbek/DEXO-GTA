@@ -272,6 +272,14 @@ const BUILDERS = {
     }
     return finish(p);
   },
+  // Marshrut nuqtasi: faqat editorda ko'rinadi (o'yin uni chizmaydi). Bayroq rangi marshrut guruhini bildiradi.
+  route_point() {
+    const p = [];
+    p.push(cyl(0.16, 0.16, 0.04, 12, 0, 0.04, 0, '#2b2f38'));            // tag
+    p.push(cyl(0.05, 0.07, 1.4, 6, 0, 0.7, 0, '#3a4048'));                // ustun
+    p.push(box(0.55, 0.34, 0.03, 0.29, 1.26, 0, '#ffffff'));              // bayroq (marshrut rangida tiniladi)
+    return finish(p);
+  },
   billboard() {
     const p = [];
     p.push(box(2.6, 0.4, 1.8, 0, 0.2, 0, '#6d7581'));                        // poydevor

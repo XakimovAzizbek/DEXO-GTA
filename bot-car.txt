@@ -1,0 +1,4 @@
+botlar: 10
+tezlik: 60
+sabr: 15
+razgon: on

@@ -225,9 +225,10 @@ function selectEntry(id) {
 function updateSelInfo() {
   const entry = selectedId != null ? getEntry(selectedId) : null;
   const isBoard = !!entry && CATALOG[entry.data.t].kind === 'billboard';
+  const isRoute = !!entry && CATALOG[entry.data.t].kind === 'route';
   const isRamp = !!entry && CATALOG[entry.data.t].kind === 'ramp';
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}`
+    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
   const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
@@ -236,7 +237,7 @@ function updateSelInfo() {
   setDisabled('smaller', !entry || isRamp);         // rampa kattalashtirilmaydi (nishab buzilmasin)
   setDisabled('bigger', !entry || isRamp);
   const tintBtn = $('selActions').querySelector('[data-act="tint"]');
-  if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : 'Rangi';   // reklama ekranida "rang" o'rniga reklama raqami almashadi
+  if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : isRoute ? 'Marshrut №' : 'Rangi';   // reklama/marshrutda "rang" o'rniga tartib raqami almashadi
 }
 
 // ---------- Qo'yish ----------
@@ -263,7 +264,7 @@ function placeAt(x, z) {
 }
 
 // Palitra
-const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', spawn: '#ffc933' };
+const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', route: '#ff5252', spawn: '#ffc933' };
 const palette = $('palette');
 for (const group of GROUPS) {
   const label = document.createElement('span');

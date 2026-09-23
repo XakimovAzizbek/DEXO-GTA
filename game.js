@@ -4,23 +4,24 @@ import {
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
   CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
   makeRamp, groundHeightAt, rampSurfaceNear,
+  buildRoutes, pointOnRoute, LANE_OFFSET, stepBot, fetchBotConfig,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
 } from './models.js';
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
+import { createBotFleet } from './botFleet.js';
 
 const $ = (id) => document.getElementById(id);
 const settings = loadSettings();
-// Hamma o'yinchilar egasi qurgan zone.json da o'ynaydi. ?draft=1 faqat egasining qoralamasini sinash uchun.
 const useDraft = new URLSearchParams(location.search).has('draft');
 const zone = (useDraft ? loadZone() : null) || (await fetchSharedZone()) || defaultZone();
-const bounds = normalizeBounds(zone.bounds);   // zona chegarasi: w/e/n/s = markazdan har tomonga masofa (metr)
+const bounds = normalizeBounds(zone.bounds);
 const boundsW = bounds.w + bounds.e, boundsD = bounds.n + bounds.s;
 const boundsCX = (bounds.e - bounds.w) / 2, boundsCZ = (bounds.s - bounds.n) / 2;
 const objects = zone.objects.map(normalizeObject);
-const weatherConfig = await fetchWeather();   // ob-havo.txt: yomg'ir / qor / shamol / kun / tun
+const weatherConfig = await fetchWeather();
 
 // ---------- Renderer ----------
 const canvas = $('scene');
@@ -43,7 +44,7 @@ const SKY = '#a9d0ea';
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 90, 340);
 
-scene.environment = makeEnvironment(renderer);   // faqat PBR (mashina) materiallariga ta'sir qiladi
+scene.environment = makeEnvironment(renderer);
 
 const camera = new THREE.PerspectiveCamera(60, 1, 0.3, 700);
 
@@ -62,9 +63,9 @@ if (shadowsOn) {
 }
 scene.add(sun, sun.target);
 
-// ---------- Ob-havo (hammasi o'chiq bo'lsa hech narsa o'zgarmaydi) ----------
+// ---------- Ob-havo ----------
 const weather = createWeather({ scene, camera, renderer, quality, config: weatherConfig, hemi, sun });
-const SNOW_MAX = { road: 0.3, ramp: 0.3, land: 0.5, billboard: 0.8 };   // yo'llarda chiziqlar ko'rinib tursin
+const SNOW_MAX = { road: 0.3, ramp: 0.3, land: 0.5, billboard: 0.8 };
 
 // ---------- Yer ----------
 const groundOuter = new THREE.Mesh(
@@ -84,7 +85,7 @@ groundZone.receiveShadow = shadowsOn;
 weather.patch(groundZone.material);
 scene.add(groundZone);
 
-// Zona chegarasi: sariq chiziq
+// Zona chegarasi
 const edgeMat = new THREE.MeshBasicMaterial({ color: '#ffc933' });
 for (const [w, d, x, z] of [
   [boundsW, 0.6, boundsCX, bounds.s], [boundsW, 0.6, boundsCX, -bounds.n],
@@ -95,11 +96,11 @@ for (const [w, d, x, z] of [
   scene.add(m);
 }
 
-// ---------- Zona obyektlari (InstancedMesh: tur boshiga bitta chizish) ----------
+// ---------- Zona obyektlari ----------
 const byType = new Map();
 for (const o of objects) {
-  if (o.t === 'spawn') continue;
-  const key = CATALOG[o.t].kind === 'ramp' ? `${o.t}:${o.y || 0}` : o.t;   // rampa: har balandlik uchun alohida model
+  if (o.t === 'spawn' || o.t === 'route_point') continue;
+  const key = CATALOG[o.t].kind === 'ramp' ? `${o.t}:${o.y || 0}` : o.t;
   if (!byType.has(key)) byType.set(key, []);
   byType.get(key).push(o);
 }
@@ -108,7 +109,7 @@ for (const list of byType.values()) {
   const type = list[0].t;
   const kind = CATALOG[type].kind;
   const mat = getMaterial(kind, 0);
-  weather.patch(mat, { snowMax: SNOW_MAX[kind] ?? 1, sway: kind === 'tree' });   // qor, ho'llik, daraxt tebranishi
+  weather.patch(mat, { snowMax: SNOW_MAX[kind] ?? 1, sway: kind === 'tree' });
   const mesh = new THREE.InstancedMesh(getGeometry(type, list[0].y || 0), mat, list.length);
   list.forEach((o, i) => {
     dummy.position.set(o.x, 0, o.z);
@@ -126,7 +127,8 @@ for (const list of byType.values()) {
   scene.add(mesh);
 }
 const colliders = objects.map(makeCollider).filter(Boolean);
-const ramps = objects.map(makeRamp).filter(Boolean);   // rampalar: mashina balandligini belgilaydi
+const ramps = objects.map(makeRamp).filter(Boolean);
+const routes = buildRoutes(objects);
 
 // ---------- Mashina modeli ----------
 function buildCar() {
@@ -171,17 +173,103 @@ function buildCar() {
   }
   return { group, wheels, frontPivots: pivots };
 }
-// carRoot: joyi va yo'nalishi; carTilt: engashish (tormozda old tomon cho'kadi, burilishda yon tomonga egiladi)
+
+// ---------- Botlar (haqiqiy GLB modellar, InstancedMesh) ----------
+let fleet = null;
+let botCfg = null;
+
+async function setupBots(setText) {
+  if (!routes.length) return;
+  botCfg = await fetchBotConfig();
+  if (!botCfg.count) return;
+
+  const cars = await fetchCarList();
+  const botCars = cars
+    .filter(c => !botCfg.bans.has(c.name.toLowerCase()))
+    .filter(c => (c.length || 4.6) <= 7)
+    .map(c => c.file)
+    .slice(0, 4);
+
+  if (!botCars.length) return;
+
+  setText(`Botlar yuklanmoqda (${botCfg.count} ta, ${botCars.length} xil model)…`);
+  fleet = await createBotFleet(scene, botCars, Math.min(botCfg.count, 400));
+  if (!fleet) { setText('Bot modellari yuklanmadi'); return; }
+
+  const perRoute = routes.map(() => []);
+  for (let i = 0; i < botCfg.count; i++) perRoute[i % routes.length].push(i);
+
+  let modelSeed = 0;
+  routes.forEach((route, ri) => {
+    const list = perRoute[ri];
+    list.forEach((_, k) => {
+      const s0 = (route.total / Math.max(1, list.length)) * (k + Math.random());
+      const start = pointOnRoute(route, s0);
+      const bot = fleet.add(start.x, start.z, Math.atan2(start.dirx, start.dirz), route, modelSeed++);
+      if (bot) {
+        bot.s = s0;
+        bot.speed = (botCfg.speedKmh / 3.6) * (0.7 + Math.random() * 0.5);
+      }
+    });
+  });
+  setText(`Botlar tayyor: ${fleet.bots.length} (${fleet.modelCount} xil model)`);
+}
+
+function updateBots(dt) {
+  if (!fleet || !botCfg) return;
+  const playerSpeed = Math.hypot(car.vx, car.vz);
+  const obstacles = [{ x: car.x, z: car.z, speed: playerSpeed }];
+
+  fleet.update(car.x, car.z, obstacles, botCfg, dt, (bot, stepDt) => {
+    bot.s += bot.speed * stepDt;
+    const pos = pointOnRoute(bot.route, bot.s);
+    const prx = -pos.dirz, prz = pos.dirx;
+
+    bot.lateral += (LANE_OFFSET - bot.lateral) * Math.min(1, stepDt * 2);
+    bot.x = pos.x + prx * bot.lateral;
+    bot.z = pos.z + prz * bot.lateral;
+    bot.heading = Math.atan2(pos.dirx, pos.dirz);
+
+    const dx = bot.x - car.x, dz = bot.z - car.z;
+    if (dx * dx + dz * dz < 64) {
+      bot.speed = Math.max(0, bot.speed - 15 * stepDt);
+    } else {
+      const target = botCfg.speedKmh / 3.6;
+      bot.speed += (target - bot.speed) * Math.min(1, stepDt * 0.5);
+    }
+  });
+}
+
+function resolveBotCollisions() {
+  if (!fleet) return;
+  const fx = Math.sin(car.h), fz = Math.cos(car.h);
+  for (const off of CAR.circles) {
+    const cx = car.x + fx * off, cz = car.z + fz * off;
+    for (const bot of fleet.bots) {
+      const dx = cx - bot.x, dz = cz - bot.z;
+      const minDist = CAR.radius + 1.2;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= minDist * minDist) continue;
+      const d = Math.sqrt(d2) || 0.001;
+      const nx = dx / d, nz = dz / d, pen = minDist - d;
+      car.x += nx * pen; car.z += nz * pen;
+      const vn = car.vx * nx + car.vz * nz;
+      if (vn < 0) { car.vx -= 1.15 * vn * nx; car.vz -= 1.15 * vn * nz; }
+      bot.speed = Math.max(0, bot.speed * 0.5);
+    }
+  }
+}
+
+// ---------- O'yinchi mashinasi ----------
 const carRoot = new THREE.Group();
 const carTilt = new THREE.Group();
 carRoot.add(carTilt);
 scene.add(carRoot);
 let carModel = { wheels: [], frontPivots: [] };
-let carProfile = { ...CAR_DEFAULTS };   // tanlangan mashinaning kamera va o'lcham sozlamalari (car.txt)
+let carProfile = { ...CAR_DEFAULTS };
 
-// Chiroqlar: car.txt dagi "light:" qatorlari (car-editor.html yasaydi). Tugma bilan yoqiladiganlari uchun HUD tugmasi bor.
 let carLights = null;
-let lightsOn = weather.night;             // tunda va tutilishda chiroq avtomatik yoniq boshlanadi
+let lightsOn = weather.night;
 const lightBtn = $('lightBtn');
 function toggleLights() {
   lightsOn = !lightsOn;
@@ -195,12 +283,11 @@ function useFallbackCar() {
   carModel = built;
 }
 
-// Tanlangan mashina (car.txt dagi nom bo'yicha). Topilmasa birinchi mashina, u ham bo'lmasa oddiy quti mashina.
 async function setupCar(setText, setProgress) {
   const cars = await fetchCarList();
   const wanted = loadSelectedCarName();
   let entry = cars.find((c) => c.name === wanted) || cars[0] || null;
-  if (entry && useDraft) entry = { ...entry, ...loadCarDraft(entry.name) };   // egasining sinov qoralamasi
+  if (entry && useDraft) entry = { ...entry, ...loadCarDraft(entry.name) };
   if (entry) {
     carProfile = entry;
     carLights = createCarLights(entry.lights, { length: entry.length, lift: entry.lift });
@@ -222,7 +309,7 @@ async function setupCar(setText, setProgress) {
   useFallbackCar();
 }
 
-// ---------- Mashina holati va fizikasi ----------
+// ---------- Fizika ----------
 const spawn = objects.find((o) => o.t === 'spawn') || { x: 0, z: 0, r: 0 };
 const car = { x: 0, z: 0, y: 0, vy: 0, h: 0, vx: 0, vz: 0, steer: 0 };
 const CAR = {
@@ -243,14 +330,12 @@ function respawn() {
 const input = { left: false, right: false, gas: false, brake: false, hand: false };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-// Yo'nalish bo'yicha nishab (balandlik/metr): mashina oldi va orqasidagi sirt balandliklari farqi
 function surfaceSlope(fx, fz) {
   if (!ramps.length) return 0;
   const hf = groundHeightAt(ramps, car.x + fx * 1.4, car.z + fz * 1.4);
   const hr = groundHeightAt(ramps, car.x - fx * 1.4, car.z - fz * 1.4);
-  return Math.abs(hf - hr) < 1.0 ? (hf - hr) / 2.8 : 0;   // rampa chetida keskin farq bo'lsa hisobga olinmaydi
+  return Math.abs(hf - hr) < 1.0 ? (hf - hr) / 2.8 : 0;
 }
-// Mashina balandligi: rampaga chiqqanda sirtga ergashadi, chetidan chiqib ketsa tushadi
 function stepVertical(dt) {
   if (!ramps.length) { car.y = 0; car.vy = 0; return; }
   const target = groundHeightAt(ramps, car.x, car.z);
@@ -264,7 +349,7 @@ function stepVertical(dt) {
 
 function stepCar(dt) {
   const fx = Math.sin(car.h), fz = Math.cos(car.h);
-  const rx = -Math.cos(car.h), rz = Math.sin(car.h);    // mashinaning o'ng tomoni
+  const rx = -Math.cos(car.h), rz = Math.sin(car.h);
   let vf = car.vx * fx + car.vz * fz;
   let vr = car.vx * rx + car.vz * rz;
 
@@ -278,20 +363,20 @@ function stepCar(dt) {
     const drag = (3 + Math.abs(vf) * 0.05) * dt;
     vf -= Math.sign(vf) * Math.min(Math.abs(vf), drag);
   }
-  vf -= vf * Math.abs(vf) * 0.0018 * dt;                 // havo qarshiligi
+  vf -= vf * Math.abs(vf) * 0.0018 * dt;
   if (input.hand) vf -= Math.sign(vf) * Math.min(Math.abs(vf), 14 * dt);
 
   if (ramps.length && car.y - groundHeightAt(ramps, car.x, car.z) < 0.3) {
-    vf -= 9.8 * 0.6 * surfaceSlope(fx, fz) * dt;          // tepaga chiqishda sekinlashadi, pastga tushishda tezlashadi
+    vf -= 9.8 * 0.6 * surfaceSlope(fx, fz) * dt;
   }
 
-  if (weather.wind.x || weather.wind.z) {                 // shamol faqat harakatda seziladi (turgan mashinani surmaydi)
+  if (weather.wind.x || weather.wind.z) {
     const moving = clamp(Math.abs(vf) / 8, 0, 1);
     vf += (weather.wind.x * fx + weather.wind.z * fz) * 0.1 * moving * dt;
     vr += (weather.wind.x * rx + weather.wind.z * rz) * moving * dt;
   }
 
-  vr *= Math.exp(-(input.hand ? 1.6 : 9) * dt);          // yon sirpanish; qo'l tormozida drift
+  vr *= Math.exp(-(input.hand ? 1.6 : 9) * dt);
 
   const target = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   car.steer += (target - car.steer) * Math.min(1, dt * 7);
@@ -299,7 +384,7 @@ function stepCar(dt) {
   const highSpeed = 1 - 0.55 * clamp(Math.abs(vf) / CAR.maxSpeed, 0, 1);
   let yaw = car.steer * 1.9 * settings.sensitivity * speedFactor * highSpeed * (vf >= 0 ? 1 : -1);
   if (input.hand) yaw *= 1.35;
-  car.h -= yaw * dt;                                      // o'ngga burilish = burchak kamayadi
+  car.h -= yaw * dt;
 
   const nfx = Math.sin(car.h), nfz = Math.cos(car.h);
   const nrx = -Math.cos(car.h), nrz = Math.sin(car.h);
@@ -309,6 +394,7 @@ function stepCar(dt) {
   car.z += car.vz * dt;
 
   resolveCollisions();
+  resolveBotCollisions();
 
   const limE = bounds.e - 2, limW = -bounds.w + 2, limS = bounds.s - 2, limN = -bounds.n + 2;
   if (car.x > limE) { car.x = limE; if (car.vx > 0) car.vx *= -0.2; }
@@ -332,12 +418,12 @@ function resolveCollisions() {
         car.x += hit.nx * hit.pen;
         car.z += hit.nz * hit.pen;
         const vn = car.vx * hit.nx + car.vz * hit.nz;
-        if (vn < 0) {                                     // to'siq ichiga kirayotgan tezlikni qaytaramiz
+        if (vn < 0) {
           car.vx -= 1.15 * vn * hit.nx;
           car.vz -= 1.15 * vn * hit.nz;
         }
       }
-      for (const r of ramps) {                            // rampa/baland yo'lning baland devoriga urilinadi, ustida yurish mumkin
+      for (const r of ramps) {
         const dx = cx - r.x, dz = cz - r.z;
         if (dx * dx + dz * dz > r.reach2) continue;
         const hit = collideCircle(r, cx, cz, CAR.radius);
@@ -362,12 +448,11 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 const desiredCam = new THREE.Vector3();
-let camBaseY = 0;   // kamera balandligi mashina balandligiga silliq ergashadi
+let camBaseY = 0;
 function placeCamera(snap, dt = 0.016) {
   const p = carProfile;
   camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * p.follow * 0.56));
   const speed = Math.hypot(car.vx, car.vz);
-  // Kamera formulasi data.js da: car-editor.html dagi ko'rinish bilan aynan bir xil
   const pose = cameraPose(p, car.x, car.z, camHeading, speed, settings.cameraDistance - 11);
   camBaseY = snap ? car.y : camBaseY + (car.y - camBaseY) * (1 - Math.exp(-dt * 6));
   desiredCam.set(pose.px, pose.py + camBaseY, pose.pz);
@@ -383,7 +468,7 @@ function bindHold(el, key) {
     e.preventDefault();
     input[key] = true;
     el.classList.add('is-down');
-    try { el.setPointerCapture(e.pointerId); } catch { /* ba'zi brauzerlarda kerak emas */ }
+    try { el.setPointerCapture(e.pointerId); } catch { }
   };
   const up = () => { input[key] = false; el.classList.remove('is-down'); };
   el.addEventListener('pointerdown', down);
@@ -422,7 +507,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) setPa
 // ---------- Radar ----------
 const mm = $('minimap');
 const mctx = mm.getContext('2d');
-const RADAR_RADIUS = 70;   // metr
+const RADAR_RADIUS = 70;
 const LAND_COLOR = { land_grass: '#3f6b34', land_sand: '#c9b77f', land_dirt: '#7a5f40', land_asphalt: '#454b55' };
 const RECT_COLOR = { road: '#3a3f47', ramp: '#59606b', house: '#e9dcc3', ridge: '#8a9580' };
 function sizeMinimap() {
@@ -441,7 +526,6 @@ function drawMinimap() {
   mctx.clip();
   mctx.fillStyle = '#4d6b3b';
   mctx.fillRect(0, 0, size, size);
-  // dunyo (x,z) -> ekran; mashina doim tepaga qaragan
   mctx.setTransform(-c * k, -s * k, s * k, -c * k, size / 2, size / 2);
   mctx.translate(-car.x, -car.z);
   const reach = RADAR_RADIUS * 1.6;
@@ -449,7 +533,7 @@ function drawMinimap() {
     for (const o of objects) {
       const def = CATALOG[o.t];
       if (def.kind !== pass) continue;
-      const ext = (def.r || Math.max(def.hw || 0, def.hd || 0)) * o.s;   // katta obyektlar (tog', maydon) chetidan ham ko'rinsin
+      const ext = (def.r || Math.max(def.hw || 0, def.hd || 0)) * o.s;
       if (Math.abs(o.x - car.x) > reach + ext || Math.abs(o.z - car.z) > reach + ext) continue;
       if (pass === 'tree' || pass === 'mountain') {
         mctx.fillStyle = pass === 'tree' ? '#2e6b3f' : '#8a9580';
@@ -473,8 +557,15 @@ function drawMinimap() {
       }
     }
   }
+  for (const bot of (fleet?.bots || [])) {
+    const dx = bot.x - car.x, dz = bot.z - car.z;
+    if (dx * dx + dz * dz > 3600) continue;
+    mctx.fillStyle = '#ff5252';
+    mctx.beginPath();
+    mctx.arc(bot.x, bot.z, 1.6, 0, Math.PI * 2);
+    mctx.fill();
+  }
   mctx.restore();
-  // mashina belgisi
   mctx.setTransform(1, 0, 0, 1, 0, 0);
   const u = size / 22;
   mctx.fillStyle = '#ffc933';
@@ -487,13 +578,12 @@ function drawMinimap() {
   mctx.fill();
 }
 
-// ---------- Reklama ekranlari (billboard.txt) ----------
-// Video faqat mashina yaqin kelganda o'ynaydi (telefon qizib ketmasligi uchun), bir vaqtda ko'pi bilan 2 ta.
+// ---------- Reklama ekranlari ----------
 const openLink = $('openLink');
-const adPlayers = [];    // har bir reklama uchun bitta video
-const screens = [];      // { o, ad, player, mats }
-const ACTIVE_RANGE = 90;   // metr: shu masofadan yaqinda video o'ynaydi
-const BUTTON_RANGE = 35;   // metr: shu masofadan yaqinda "Open" tugmasi chiqadi
+const adPlayers = [];
+const screens = [];
+const ACTIVE_RANGE = 90;
+const BUTTON_RANGE = 35;
 const SCREEN_ASPECT = BILLBOARD_SCREEN.w / BILLBOARD_SCREEN.h;
 
 function makeAdPlayer(ad) {
@@ -502,7 +592,7 @@ function makeAdPlayer(ad) {
 function startAd(p) {
   if (!p.video) {
     const v = document.createElement('video');
-    v.crossOrigin = 'anonymous';           // havola CORS ruxsat berishi kerak (o'z omboringizdagi fayl doim mos)
+    v.crossOrigin = 'anonymous';
     v.muted = true; v.defaultMuted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
     v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('webkit-playsinline', '');
     v.src = p.ad.video;
@@ -510,20 +600,20 @@ function startAd(p) {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.generateMipmaps = false;
     tex.minFilter = THREE.LinearFilter;
-    v.addEventListener('loadedmetadata', () => {      // ekranni buzmasdan to'ldirish (chetlari qirqiladi)
+    v.addEventListener('loadedmetadata', () => {
       const va = v.videoWidth / v.videoHeight;
       if (!Number.isFinite(va) || va <= 0) return;
       if (va > SCREEN_ASPECT) { tex.repeat.set(SCREEN_ASPECT / va, 1); tex.offset.set((1 - SCREEN_ASPECT / va) / 2, 0); }
       else { tex.repeat.set(1, va / SCREEN_ASPECT); tex.offset.set(0, (1 - va / SCREEN_ASPECT) / 2); }
     });
-    v.addEventListener('playing', () => {             // video tayyor bo'lgach ekranga qo'yamiz
+    v.addEventListener('playing', () => {
       for (const m of p.mats) { m.map = tex; m.color.set('#ffffff'); m.needsUpdate = true; }
     });
     v.addEventListener('error', () => console.warn('Reklama videosi yuklanmadi:', p.ad.video));
     p.video = v;
     p.texture = tex;
   }
-  if (p.video.paused) p.video.play().catch(() => { /* brauzer hozircha ruxsat bermadi, keyingi urinishda */ });
+  if (p.video.paused) p.video.play().catch(() => { });
 }
 function stopAd(p) {
   if (p.video && !p.video.paused) p.video.pause();
@@ -545,7 +635,7 @@ function setupBillboards(ads) {
     group.rotation.y = o.r;
     group.scale.setScalar(o.s);
     const mats = [];
-    for (const side of [1, -1]) {                     // old va orqa tomonda bir xil video
+    for (const side of [1, -1]) {
       const mat = new THREE.MeshBasicMaterial({ color: '#20242b' });
       const plane = new THREE.Mesh(planeGeo, mat);
       plane.position.set(0, BILLBOARD_SCREEN.y, side * BILLBOARD_SCREEN.z);
@@ -582,10 +672,7 @@ function updateBillboards(dt) {
   }
 }
 
-// ---------- Hajm va sikl ----------
 // ---------- Yotiq dizayn ----------
-// Telefon tik turganda butun o'yin qatlami (#stage) 90° buriladi: telefonni yon tomonga burib ushlaysiz.
-// Telefon o'zi yotiq holatga o'tsa (avto-aylanish yoki qulflash ishlasa), buralmaydi.
 const stageEl = $('stage');
 const rotateHint = $('rotateHint');
 let rotated = false, hintTimer = 0, hintShown = false;
@@ -603,7 +690,7 @@ function applyLayout() {
     stageEl.style.transform = settings.landscapeSide === 'ccw'
       ? `translateY(${innerHeight}px) rotate(-90deg)`
       : `translateX(${innerWidth}px) rotate(90deg)`;
-    if (!hintShown) {                       // eslatma faqat bir marta, bir necha soniya
+    if (!hintShown) {
       hintShown = true;
       rotateHint.hidden = false;
       hintTimer = setTimeout(() => { rotateHint.hidden = true; }, 7000);
@@ -625,14 +712,13 @@ function flipSide() {
 $('flipSide').addEventListener('click', flipSide);
 $('flipSide2').addEventListener('click', flipSide);
 
-// Birinchi bosishda to'liq ekran va yotiq qulflashga urinamiz (Android Chrome'da ishlaydi; ishlamasa majburiy burish qoladi)
 async function tryLandscapeLock() {
   if (settings.landscape === 'off') return;
   try {
     const root = document.documentElement;
     if (!document.fullscreenElement && root.requestFullscreen) await root.requestFullscreen({ navigationUI: 'hide' });
     if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
-  } catch { /* brauzer ruxsat bermadi */ }
+  } catch { }
 }
 addEventListener('pointerup', tryLandscapeLock, { once: true });
 
@@ -673,14 +759,14 @@ function frame(now) {
     const tiltK = carProfile.tilt;
     tiltPitch += (clamp(-acc * 0.0035, -0.05, 0.05) * tiltK - tiltPitch) * ease;
     tiltRoll += (clamp(-car.steer * clamp(Math.abs(vf) / 20, 0, 1) * 0.05, -0.05, 0.05) * tiltK - tiltRoll) * ease;
-    const slopePitch = ramps.length ? -Math.atan(surfaceSlope(Math.sin(car.h), Math.cos(car.h))) : 0;   // rampada burun nishabga qaraydi
+    const slopePitch = ramps.length ? -Math.atan(surfaceSlope(Math.sin(car.h), Math.cos(car.h))) : 0;
     tiltSlope += (slopePitch - tiltSlope) * ease;
     carTilt.rotation.set(tiltPitch + tiltSlope, 0, tiltRoll);
 
     for (const w of carModel.wheels) w.rotation.x += (vf * dt) / 0.38;
     for (const p of carModel.frontPivots) p.rotation.y = -car.steer * 0.5;
 
-    if (carLights) {                          // tormoz / orqaga yurish / tugma chiroqlari
+    if (carLights) {
       carLights.update({
         brake: (input.brake && vf > 0.5) || input.hand,
         reverse: vf < -0.3 || (input.brake && vf <= 0.5),
@@ -696,6 +782,7 @@ function frame(now) {
     if (kmh !== shownSpeed) { shownSpeed = kmh; speedEl.textContent = kmh; }
     drawMinimap();
     updateBillboards(dt);
+    updateBots(dt);
     weather.update(dt);
   }
 
@@ -715,6 +802,7 @@ async function start() {
     (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
   );
   respawn();
+  await setupBots((text) => { loadingText.textContent = text; });
   setupBillboards(await fetchBillboardList());
 
   if (settings.useCityModel) {
