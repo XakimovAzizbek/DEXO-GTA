@@ -1,6 +1,7 @@
 name: KIA K5
 car: kia_k5.glb
-carx: 1
+length: 5.6
+carx: 1.2
 carz: 1.1
 camdist: 5
 camheight: 2.9
@@ -72,3 +73,21 @@ carz: -6
 camdist: 9
 camheight: 3.6
 aimy: 3.5
+
+name: BMW M4
+car: bmw_m4csl-v1.glb
+carz: -2.7
+camdist: 8
+camheight: 3.4
+aimy: 3.2
+fov: 62
+fovspeed: 0.8
+follow: 20
+
+name: MONZA
+car: 2023_chevrolet_monza.glb
+length: 7
+carz: -6
+camdist: 8.5
+camheight: 3.4
+aimy: 2.3
