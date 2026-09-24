@@ -84,10 +84,12 @@ fov: 62
 fovspeed: 0.8
 follow: 20
 
-name: MONZA
-car: 2023_chevrolet_monza.glb
+name: MATIZ
+car: matiz_turbo-v1.glb
 length: 7
-carz: -6
-camdist: 8.5
-camheight: 3.4
-aimy: 2.3
+carz: -4.9
+camdist: 9.5
+camheight: 4.8
+aimy: 2.5
+fov: 62
+follow: 12.5
