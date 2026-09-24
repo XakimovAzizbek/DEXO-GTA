@@ -13,6 +13,7 @@ import {
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
+import { unlockCarAudio, updateCarAudio } from './carAudio.js';
 
 const $ = (id) => document.getElementById(id);
 const settings = loadSettings();
@@ -478,6 +479,7 @@ function placeCamera(snap, dt = 0.016) {
 function bindHold(el, key) {
   const down = (e) => {
     e.preventDefault();
+    unlockCarAudio();   // ovoz faqat foydalanuvchi teginganidan keyin ishga tushadi (brauzer talabi)
     input[key] = true;
     el.classList.add('is-down');
     try { el.setPointerCapture(e.pointerId); } catch { }
@@ -496,6 +498,7 @@ const KEYMAP = {
   ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'hand',
 };
 addEventListener('keydown', (e) => {
+  unlockCarAudio();
   if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
   else if (e.code === 'KeyL') toggleLights();
@@ -508,7 +511,7 @@ let paused = false;
 function setPaused(value) {
   paused = value;
   $('pause').hidden = !value;
-  if (value) for (const k of Object.keys(input)) input[k] = false;
+  if (value) { for (const k of Object.keys(input)) input[k] = false; updateCarAudio(0, CAR.maxSpeed, false, false); }
   document.querySelectorAll('.ctl.is-down').forEach((el) => el.classList.remove('is-down'));
 }
 $('pauseBtn').addEventListener('click', () => setPaused(true));
@@ -787,6 +790,7 @@ function frame(now) {
         button: lightsOn,
       });
     }
+    updateCarAudio(Math.abs(vf), CAR.maxSpeed, input.gas, (input.brake && vf > 0.5) || input.hand);
 
     placeCamera(false, dt);
     sun.position.set(car.x + 40, 70, car.z + 25);
