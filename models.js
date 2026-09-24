@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex } from './data.js';
+import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex, BEND_ANGLE } from './data.js';
 
 const TL_POLE_H = 3.0; // svetofor ustunining balandligi (metr), bosh qutisi shundan yuqorida boshlanadi
 
@@ -128,9 +128,151 @@ function rampGeometry(hLow, hHigh) {
   return finish(parts);
 }
 
+// Burilgan (bend) yo'l/rampa uchun markaziy chiziq: yoy shaklida bir necha gradusga qiyshaygan.
+// bend: -1 chapga, 1 o'ngga. N — bo'lish soni (qancha ko'p bo'lsa shuncha silliq yoy).
+function bendPoints(hw, hd, bend, N) {
+  const totalYaw = BEND_ANGLE * bend;
+  const dYaw = totalYaw / N;
+  const dL = (2 * hd) / N;
+  let x = 0, z = -hd, yaw = 0;
+  const pts = [{ x, z, yaw }];
+  for (let i = 0; i < N; i++) {
+    const mid = yaw + dYaw / 2;
+    x += Math.sin(mid) * dL;
+    z += Math.cos(mid) * dL;
+    yaw += dYaw;
+    pts.push({ x, z, yaw });
+  }
+  for (const p of pts) {
+    p.left = { x: p.x - Math.cos(p.yaw) * hw, z: p.z + Math.sin(p.yaw) * hw };
+    p.right = { x: p.x + Math.cos(p.yaw) * hw, z: p.z - Math.sin(p.yaw) * hw };
+  }
+  return pts;
+}
+// s — markaziy chiziq bo'ylab masofa (0..2*hd), boshidan hisoblanadi. Nuqtalar orasini silliq
+// (chiziqli) interpolyatsiya qiladi — shu bois chiziqlar N ga bog'liq bo'lmay silliq chiqadi.
+function centerAt(pts, hd, s) {
+  const N = pts.length - 1;
+  const dL = (2 * hd) / N;
+  const t = Math.min(N, Math.max(0, s / dL));
+  const i = Math.min(N - 1, Math.floor(t));
+  const f = t - i;
+  const p0 = pts[i], p1 = pts[i + 1];
+  return { x: p0.x + (p1.x - p0.x) * f, z: p0.z + (p1.z - p0.z) * f, yaw: p0.yaw + (p1.yaw - p0.yaw) * f };
+}
+function sideAt(p, w) {
+  return {
+    left: { x: p.x - Math.cos(p.yaw) * w, z: p.z + Math.sin(p.yaw) * w },
+    right: { x: p.x + Math.cos(p.yaw) * w, z: p.z - Math.sin(p.yaw) * w },
+  };
+}
+// signed offset: musbat = o'ng tomon, manfiy = chap tomon (yaw yo'nalishiga nisbatan)
+function offsetPoint(p, w) {
+  return { x: p.x + Math.cos(p.yaw) * w, z: p.z - Math.sin(p.yaw) * w };
+}
+// Bitta tomondagi chiziq lentasi uchun kesim: [ichki chegara, tashqi chegara] — sgn -1/1 chap/o'ng tomonni bildiradi.
+function stripCross(p, sgn, innerW, outerW) {
+  return { left: offsetPoint(p, sgn * innerW), right: offsetPoint(p, sgn * outerW) };
+}
+
+// Tekis (baland bo'lmagan) yo'l bo'lagining burilgan varianti: faqat asfalt + chiziqlar, damba yo'q.
+function bentRoadGeometry(bend) {
+  const hw = 6, hd = 12, N = 12;
+  const pts = bendPoints(hw, hd, bend, N);
+  const parts = [];
+  const P2 = (p, y) => new THREE.Vector3(p.x, y, p.z);
+  const flatQuad = (p0, p1, y, hex) => {
+    const v = [P2(p0.left, y), P2(p0.right, y), P2(p1.right, y), P2(p0.left, y), P2(p1.right, y), P2(p1.left, y)];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v.flatMap((p) => [p.x, p.y, p.z]), 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(v.flatMap(() => [0, 1, 0]), 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(v.length * 2).fill(0), 2));
+    parts.push(paint(g, hex));
+  };
+  for (let i = 0; i < N; i++) flatQuad(pts[i], pts[i + 1], 0.04, '#3a3f47');
+  // chekka (oq) chiziqlar — chetga yaqin, butun uzunlik bo'yicha uzluksiz
+  const stripW = 0.25, edgeOff = hw - 0.25;
+  for (let i = 0; i < N; i++) {
+    for (const sgn of [-1, 1]) {
+      flatQuad(stripCross(pts[i], sgn, edgeOff, edgeOff + stripW), stripCross(pts[i + 1], sgn, edgeOff, edgeOff + stripW), 0.045, '#e9ecef');
+    }
+  }
+  // o'rtadagi uzuq (sariq) chiziq: asl to'g'ri yo'ldagi bilan bir xil oraliqda (4 m dan, 2.4 m uzunlikda),
+  // shu bois qayrilmada ham chiziqlar uzluksiz ko'rinib, "yo'qolib qolmaydi".
+  const dashHalf = 1.2, dashW = 0.15;
+  for (const zc of [-10, -6, -2, 2, 6, 10]) {
+    const s0 = zc + hd - dashHalf, sm = zc + hd, s1 = zc + hd + dashHalf;
+    const a = centerAt(pts, hd, s0), m = centerAt(pts, hd, sm), b = centerAt(pts, hd, s1);
+    flatQuad(sideAt(a, dashW), sideAt(m, dashW), 0.05, '#ffc933');
+    flatQuad(sideAt(m, dashW), sideAt(b, dashW), 0.05, '#ffc933');
+  }
+  return finish(parts);
+}
+
+// Rampaning burilgan varianti: har bo'lak biroz yoy bo'ylab siljiydi va balandligi chiziqli o'zgaradi,
+// ostida esa yergacha tayanch (damba) bor — asl to'g'ri rampadagi kabi.
+function bentRampGeometry(hLow, hHigh, bend) {
+  const hw = 6, hd = 12, N = 12;
+  const pts = bendPoints(hw, hd, bend, N);
+  const yAt = (s) => hLow + (hHigh - hLow) * (s / (2 * hd));
+  const parts = [];
+  const P2 = (p, y) => new THREE.Vector3(p.x, y, p.z);
+  const quad = (p0, p1, p2, p3, out, hex) => {
+    const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0));
+    if (n.lengthSq() < 1e-9) return;
+    const [a, b, c, d] = n.dot(out) >= 0 ? [p0, p1, p2, p3] : [p0, p3, p2, p1];
+    n.normalize();
+    if (n.dot(out) < 0) n.negate();
+    const v = [a, b, c, a, c, d];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v.flatMap((p) => [p.x, p.y, p.z]), 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(v.flatMap(() => [n.x, n.y, n.z]), 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(v.length * 2).fill(0), 2));
+    parts.push(paint(g, hex));
+  };
+  const flatQuad = (p0, p1, y0, y1, hex) => {
+    const v = [P2(p0.left, y0), P2(p0.right, y0), P2(p1.right, y1), P2(p0.left, y0), P2(p1.right, y1), P2(p1.left, y1)];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v.flatMap((p) => [p.x, p.y, p.z]), 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(v.flatMap(() => [0, 1, 0]), 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Array(v.length * 2).fill(0), 2));
+    parts.push(paint(g, hex));
+  };
+  for (let i = 0; i < N; i++) {
+    const p0 = pts[i], p1 = pts[i + 1];
+    const y0 = hLow + (hHigh - hLow) * (i / N), y1 = hLow + (hHigh - hLow) * ((i + 1) / N);
+    const a = P2(p0.left, y0), b = P2(p0.right, y0), c = P2(p1.right, y1), d = P2(p1.left, y1);
+    const A = P2(p0.left, 0), B = P2(p0.right, 0), C = P2(p1.right, 0), D = P2(p1.left, 0);
+    quad(a, b, c, d, new THREE.Vector3(0, 1, 0), '#3a3f47');                 // asfalt
+    const midYaw = (p0.yaw + p1.yaw) / 2;
+    const rightN = new THREE.Vector3(Math.cos(midYaw), 0, -Math.sin(midYaw));
+    quad(B, C, c, b, rightN, '#6b7078');                                     // o'ng yon devor
+    quad(A, D, d, a, rightN.clone().negate(), '#6b7078');                    // chap yon devor
+    if (i === 0) quad(A, B, b, a, new THREE.Vector3(0, 0, -1), '#6b7078');    // orqa (past) devor
+    if (i === N - 1) quad(D, C, c, d, new THREE.Vector3(0, 0, 1), '#6b7078'); // old (yuqori) devor
+  }
+  // chekka (oq) chiziqlar — nishabga mos balandlikda, butun uzunlik bo'yicha uzluksiz
+  const edgeOff = hw - 0.25, edgeW = 0.25;
+  for (let i = 0; i < N; i++) {
+    const y0 = yAt((i / N) * 2 * hd), y1 = yAt(((i + 1) / N) * 2 * hd);
+    for (const sgn of [-1, 1]) {
+      flatQuad(stripCross(pts[i], sgn, edgeOff, edgeOff + edgeW), stripCross(pts[i + 1], sgn, edgeOff, edgeOff + edgeW), y0 + 0.02, y1 + 0.02, '#e9ecef');
+    }
+  }
+  // markazdagi uzuq (sariq) chiziq: asl rampadagi bilan bir xil oraliqda, nishabga mos balandlikda
+  const dashHalf = 1.2, dashW = 0.15;
+  for (const zc of [-10, -6, -2, 2, 6, 10]) {
+    const s0 = zc + hd - dashHalf, sm = zc + hd, s1 = zc + hd + dashHalf;
+    const a = centerAt(pts, hd, s0), m = centerAt(pts, hd, sm), b = centerAt(pts, hd, s1);
+    flatQuad(sideAt(a, dashW), sideAt(m, dashW), yAt(s0) + 0.02, yAt(sm) + 0.02, '#ffc933');
+    flatQuad(sideAt(m, dashW), sideAt(b, dashW), yAt(sm) + 0.02, yAt(s1) + 0.02, '#ffc933');
+  }
+  return finish(parts);
+}
+
 const BUILDERS = {
-  ramp_up(level = 0) { return rampGeometry(level, level + 3); },
-  ramp_flat(level = 3) { return rampGeometry(level, level); },
+  ramp_up(level = 0, bend = 0) { return bend ? bentRampGeometry(level, level + 3, bend) : rampGeometry(level, level + 3); },
+  ramp_flat(level = 3, bend = 0) { return bend ? bentRampGeometry(level, level, bend) : rampGeometry(level, level); },
   house_small() {
     const hw = 4, hd = 4, h = 3.4, p = [];
     p.push(box(hw * 2 + 0.5, 0.3, hd * 2 + 0.5, 0, 0.15, 0, '#9aa0a6'));
@@ -191,7 +333,8 @@ const BUILDERS = {
     p.push(blob(1.5, -1.1, 4.9, -0.7, '#4f8a37'));
     return finish(p);
   },
-  road_straight() {
+  road_straight(bend = 0) {
+    if (bend) return bentRoadGeometry(bend);
     const p = [];
     p.push(box(12, 0.08, 24, 0, 0.04, 0, '#3a3f47'));
     p.push(box(0.25, 0.09, 24, -5.5, 0.045, 0, '#e9ecef'));
@@ -317,10 +460,13 @@ const BUILDERS = {
 };
 
 const geoCache = new Map();
-// level: faqat rampalar uchun (past uchining balandligi); har bir balandlik uchun alohida model quriladi
-export function getGeometry(type, level = 0) {
-  const key = CATALOG[type].kind === 'ramp' ? `${type}:${level}` : type;
-  if (!geoCache.has(key)) geoCache.set(key, BUILDERS[type](level));
+const BENDABLE_BUILD = new Set(['road_straight', 'ramp_up', 'ramp_flat']);
+// level: faqat rampalar uchun (past uchining balandligi); bend: burilish (-1/0/1) — har birining kombinatsiyasi uchun alohida model quriladi
+export function getGeometry(type, level = 0, bend = 0) {
+  const isRamp = CATALOG[type].kind === 'ramp';
+  const b = BENDABLE_BUILD.has(type) ? (bend || 0) : 0;
+  const key = isRamp ? `${type}:${level}:${b}` : (b ? `${type}:${b}` : type);
+  if (!geoCache.has(key)) geoCache.set(key, isRamp ? BUILDERS[type](level, b) : BUILDERS[type](b));
   return geoCache.get(key);
 }
 

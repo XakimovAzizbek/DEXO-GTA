@@ -269,6 +269,13 @@ export function isValidZone(z) {
 export const RAMP_STEP = 3;
 export const RAMP_MAX = 30;
 
+// ---------- Burilish (yo'l/rampani bir necha gradusga qiyshaytirish, 90° burish emas) ----------
+// Qo'shilganda yo'l/rampa bo'lagining o'zi ozgina yoy shaklida buriladi, shu bois ketma-ket
+// qo'yilgan bo'laklar burchakda "sinib" qolmay, silliq qayrilma hosil qiladi.
+export const BEND_TYPES = new Set(['road_straight', 'ramp_up', 'ramp_flat']);
+export const BEND_ANGLE = Math.PI / 12; // 15° — bitta bo'lakning boshi bilan oxiri orasidagi burchak
+export const isBendable = (t) => BEND_TYPES.has(t);
+
 // ---------- Svetofor: 3 ta chiroq (qizil/sariq/yashil), har birining o'z joyi va soniyasi ----------
 export const TRAFFIC_LIGHT_COLORS = ['red', 'yellow', 'green'];
 export const TRAFFIC_LIGHT_HEX = { red: '#ff3b30', yellow: '#ffcc00', green: '#33cc66' };
@@ -325,6 +332,11 @@ export function normalizeObject(o) {
   if (kind === 'ramp') {
     const min = def.rise === 0 ? RAMP_STEP : 0;
     out.y = Math.min(RAMP_MAX, Math.max(min, Math.round((Number(o.y) || 0) / RAMP_STEP) * RAMP_STEP));
+  }
+  if (isBendable(o.t)) {
+    // -1 = chapga, 0 = to'g'ri, 1 = o'ngga qayrilma
+    const b = Math.round(Number(o.bend));
+    out.bend = Number.isFinite(b) ? Math.max(-1, Math.min(1, b)) : 0;
   }
   if (kind === 'traffic_light') {
     const defs = defaultTrafficLights();
@@ -588,7 +600,10 @@ export function stepBot(bot, route, objects, obstacles, dt, cfg) {
 export function makeRamp(o) {
   const def = CATALOG[o.t];
   if (!def || def.kind !== 'ramp') return null;
-  const hw = def.hw, hd = def.hd, reach = Math.hypot(hw, hd) + 3;
+  const bend = isBendable(o.t) ? (o.bend || 0) : 0;
+  // Burilgan rampa markazdan ozgina yon tomonga qayriladi; qoplov radiusini shunga moslab kengaytiramiz,
+  // shu bois harakat va balandlik hisobi qayrilma yoyining hammasini qamrab oladi.
+  const hw = def.hw + (bend ? 3 : 0), hd = def.hd, reach = Math.hypot(hw, hd) + 3;
   return {
     shape: 'box', x: o.x, z: o.z, hw, hd, cos: Math.cos(o.r), sin: Math.sin(o.r),
     base: o.y || 0, rise: def.rise, reach2: reach * reach,

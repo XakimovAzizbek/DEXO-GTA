@@ -97,9 +97,12 @@ follow: 12.5
 name: DAMAS
 car: chevrolet_damas-v1.glb
 length: 7
+lift: -0.12
 carz: -6
 camdist: 9.5
 camheight: 4.8
 aimy: 3
 fov: 65
 fovspeed: 0.05
+light: shape=round func=brake color=#ff2a2a x=0.86 y=1.28 z=-2.2 size=0.75 mirror=1
+light: shape=square func=reverse color=#ffffff x=0.84 y=1.08 z=-2.22 size=0.75 mirror=1

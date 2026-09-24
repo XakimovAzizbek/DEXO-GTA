@@ -5,6 +5,7 @@ import {
   loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
   TRAFFIC_LIGHT_COLORS, TRAFFIC_HEAD, TRAFFIC_SEC_MIN, TRAFFIC_SEC_MAX,
+  isBendable,
 } from './data.js';
 import { getGeometry, getMaterial, loadCity, buildTrafficLightGroup, refreshTrafficLightGroup, updateTrafficLightGroup } from './models.js';
 import { showSaveDialog } from './savefile.js';
@@ -111,6 +112,7 @@ let tool = 'place';
 let currentType = 'house_small';
 let placeLevel = 0;          // qo'yiladigan rampaning balandligi (m)
 let placeQuarter = 0;        // qo'yiladigan uy/yo'l burilishi: 0..3 * 90°
+let placeBend = 0;           // qo'yiladigan yo'l/rampaning qayrilmasi: -1 chap, 0 to'g'ri, 1 o'ng
 let snapSize = 2;
 const undoStack = [];
 let dirty = false;
@@ -161,7 +163,7 @@ function applyTransform(mesh, data) {
 function addEntry(data) {
   const def = CATALOG[data.t];
   const isTL = def.kind === 'traffic_light';
-  const mesh = isTL ? buildTrafficLightGroup(data) : new THREE.Mesh(getGeometry(data.t, data.y || 0), getMaterial(def.kind, data.c));
+  const mesh = isTL ? buildTrafficLightGroup(data) : new THREE.Mesh(getGeometry(data.t, data.y || 0, data.bend || 0), getMaterial(def.kind, data.c));
   applyTransform(mesh, data);
   const entry = { id: nextId++, data, mesh };
   mesh.userData.id = entry.id;
@@ -184,7 +186,7 @@ function refreshEntry(entry) {
   if (CATALOG[entry.data.t].kind === 'traffic_light') {
     refreshTrafficLightGroup(entry.mesh, entry.data);
   } else {
-    entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0);   // rampa balandligi o'zgarganda
+    entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0, entry.data.bend || 0);   // rampa balandligi/burilishi o'zgarganda
     entry.mesh.material = getMaterial(CATALOG[entry.data.t].kind, entry.data.c);
   }
   if (helper && selectedId === entry.id) helper.update();
@@ -235,8 +237,10 @@ function updateSelInfo() {
   const isRoute = !!entry && CATALOG[entry.data.t].kind === 'route';
   const isRamp = !!entry && CATALOG[entry.data.t].kind === 'ramp';
   const isTL = !!entry && CATALOG[entry.data.t].kind === 'traffic_light';
+  const isBend = !!entry && isBendable(entry.data.t);
+  const bendLabel = (b) => (b < 0 ? 'chapga' : b > 0 ? 'o‘ngga' : 'to‘g‘ri');
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
+    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isBend ? `, burilish: ${bendLabel(entry.data.bend || 0)}` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
   const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
@@ -244,6 +248,7 @@ function updateSelInfo() {
   setDisabled('hDown', !isRamp);
   setDisabled('smaller', !entry || isRamp);         // rampa kattalashtirilmaydi (nishab buzilmasin)
   setDisabled('bigger', !entry || isRamp);
+  setDisabled('bend', !isBend);                     // qayrilma faqat to'g'ri yo'l/rampa uchun
   const tintBtn = $('selActions').querySelector('[data-act="tint"]');
   if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : isRoute ? 'Marshrut №' : 'Rangi';   // reklama/marshrutda "rang" o'rniga tartib raqami almashadi
   updateLightPanel(entry, isTL);
@@ -306,6 +311,7 @@ function placeAt(x, z) {
     s: isTree ? 0.85 + Math.random() * 0.5 : (def.kind === 'mountain' ? 0.85 + Math.random() * 0.4 : 1),
     c: currentType === 'billboard' ? 0 : randomTint(currentType),
     y: placeLevel,
+    bend: isBendable(currentType) ? placeBend : 0,
   }));
   scheduleSave();
 }
@@ -329,7 +335,7 @@ for (const group of GROUPS) {
     const text = document.createElement('span');
     text.textContent = def.label;
     btn.append(swatch, text);
-    btn.addEventListener('click', () => { currentType = type; markActiveChip(); });
+    btn.addEventListener('click', () => { currentType = type; markActiveChip(); updatePlaceBendUI(); });
     palette.append(btn);
   }
 }
@@ -346,6 +352,20 @@ $('placeRot').addEventListener('click', () => {
   placeQuarter = (placeQuarter + 1) % 4;
   $('placeRot').textContent = `Burish: ${placeQuarter * 90}°`;
 });
+// Qayrilma: to'g'ri yo'l/rampani bir necha gradusga qiyshaytiradi (90° burish emas — yoy shaklida qayriladi),
+// shu bois ketma-ket qo'yilgan bo'laklar burchakda sinib qolmay silliq qayrilma hosil qiladi.
+const BEND_LABEL = { 0: 'to‘g‘ri', 1: 'o‘ngga', [-1]: 'chapga' };
+function updatePlaceBendUI() {
+  const on = isBendable(currentType);
+  $('placeBend').hidden = !on;
+  if (!on) placeBend = 0;
+  $('placeBend').textContent = `Burilish: ${BEND_LABEL[placeBend]}`;
+}
+$('placeBend').addEventListener('click', () => {
+  placeBend = ((placeBend + 2) % 3) - 1;   // to'g'ri → o'ng → chap → to'g'ri
+  updatePlaceBendUI();
+});
+updatePlaceBendUI();
 
 // ---------- Asboblar ----------
 function setTool(next) {
@@ -395,6 +415,7 @@ $('selActions').addEventListener('click', (ev) => {
   else if (act === 'smaller') actOnSelected((e) => { e.data.s = Math.max(0.4, e.data.s / 1.1); });
   else if (act === 'bigger') actOnSelected((e) => { e.data.s = Math.min(3, e.data.s * 1.1); });
   else if (act === 'tint') actOnSelected((e) => { e.data.c = (e.data.c + 1) % TINTS[kind].length; });
+  else if (act === 'bend') actOnSelected((e) => { e.data.bend = ((e.data.bend || 0) + 2) % 3 - 1; });   // to'g'ri → o'ng → chap → to'g'ri
   else if (act === 'dup') {
     if (entries.length >= MAX_OBJECTS) { toast('Obyektlar soni chegaraga yetdi'); return; }
     if (entry.data.t === 'spawn') { toast('Boshlanish nuqtasi faqat bitta bo‘ladi'); return; }

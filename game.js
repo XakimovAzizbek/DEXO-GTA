@@ -112,7 +112,7 @@ for (const o of objects) {
     trafficLightEntries.push({ group, data: o });
     continue;
   }
-  const key = CATALOG[o.t].kind === 'ramp' ? `${o.t}:${o.y || 0}` : o.t;
+  const key = CATALOG[o.t].kind === 'ramp' ? `${o.t}:${o.y || 0}:${o.bend || 0}` : (o.bend ? `${o.t}:${o.bend}` : o.t);
   if (!byType.has(key)) byType.set(key, []);
   byType.get(key).push(o);
 }
@@ -122,7 +122,7 @@ for (const list of byType.values()) {
   const kind = CATALOG[type].kind;
   const mat = getMaterial(kind, 0);
   weather.patch(mat, { snowMax: SNOW_MAX[kind] ?? 1, sway: kind === 'tree' });
-  const mesh = new THREE.InstancedMesh(getGeometry(type, list[0].y || 0), mat, list.length);
+  const mesh = new THREE.InstancedMesh(getGeometry(type, list[0].y || 0, list[0].bend || 0), mat, list.length);
   list.forEach((o, i) => {
     dummy.position.set(o.x, 0, o.z);
     dummy.rotation.set(0, o.r, 0);
