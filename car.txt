@@ -15,7 +15,7 @@ light: shape=round func=reverse color=#ffffff x=0.5 y=0.92 z=-2.22 size=0.4 mirr
 light: shape=round func=reverse color=#ffffff x=1.52 y=0.92 z=-2.22 size=0.4 mirror=0
 
 name: NEXIA 2
-car: nexia2.glb
+car: nexia2-v1.glb
 length: 6
 lift: -0.34
 carz: -6
@@ -27,7 +27,7 @@ follow: 20
 light: shape=round func=brake color=#ff2a2a x=0.66 y=0.92 z=-2.12 size=0.65 mirror=1
 
 name: malibu premier
-car: malibu_premier.glb
+car: malibu_premier-v1.glb
 length: 7
 carz: -6
 camdist: 10.5
@@ -59,3 +59,16 @@ camheight: 4.5
 aimy: 4
 fov: 71
 light: shape=round func=brake color=#ff2a2a x=0.6 y=1.08 z=-2.1 size=0.8 mirror=1
+
+name: SPARK
+car: chevrolet_spark-v1.glb
+camdist: 8
+camheight: 3.5
+aimy: 3.2
+
+name: ONIX
+car: chevrolet_onix-v1.glb
+carz: -6
+camdist: 9
+camheight: 3.6
+aimy: 3.5
