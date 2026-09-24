@@ -51,7 +51,7 @@ follow: 20
 tilt: 2.5
 
 name: chevrolet traverse
-car: 2023_chevrolet_traverse_rs.glb
+car: 2023_chevrolet_traverse_rs-v2.glb
 length: 6.3
 carz: -6
 camdist: 9
