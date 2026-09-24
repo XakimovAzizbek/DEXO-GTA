@@ -4,7 +4,9 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { CATALOG, TINTS } from './data.js';
+import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex } from './data.js';
+
+const TL_POLE_H = 3.0; // svetofor ustunining balandligi (metr), bosh qutisi shundan yuqorida boshlanadi
 
 export const CITY_URL = 'assets/procedural_city_6.glb';
 
@@ -294,6 +296,14 @@ const BUILDERS = {
     }
     return finish(p);
   },
+  traffic_light() {
+    const p = [];
+    p.push(cyl(0.1, 0.13, TL_POLE_H, 8, 0, TL_POLE_H / 2, 0, '#3a3f47'));         // ustun
+    p.push(box(0.7, 2.2, 0.34, 0, TL_POLE_H + 1.1, 0, '#20242b'));                // bosh qutisi
+    p.push(box(0.5, 0.1, 0.14, 0, TL_POLE_H + 2.22, 0, '#20242b'));               // tepa qopqog'i
+    p.push(cyl(0.16, 0.16, 0.3, 8, 0, 0.15, 0, '#3a3f47'));                       // asos
+    return finish(p);
+  },
   spawn() {
     const p = [];
     p.push(cyl(2.4, 2.4, 0.12, 24, 0, 0.06, 0, '#ffc933'));
@@ -329,6 +339,45 @@ export function tintColor(kind, tint = 0) {
 }
 
 export function kindOf(type) { return CATALOG[type].kind; }
+
+// ---------- Svetofor: statik ustun+quti (getGeometry orqali) + 3 ta alohida chiroq mesh (rangi vaqt bilan almashadi) ----------
+export function buildTrafficLightGroup(data) {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(getGeometry('traffic_light', 0), getMaterial('traffic_light', data.c));
+  group.add(body);
+  const lightMeshes = [];
+  for (let i = 0; i < 3; i++) {
+    const l = data.lights[i];
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.19, 10, 8),
+      new THREE.MeshBasicMaterial({ color: TRAFFIC_LIGHT_DIM[l.color] }),
+    );
+    mesh.position.set(l.dx, TL_POLE_H + l.dy, 0.2);
+    group.add(mesh);
+    lightMeshes.push(mesh);
+  }
+  group.userData.lightMeshes = lightMeshes;
+  return group;
+}
+// Chiroqlar joyi/soniyasi editorda o'zgarganda pozitsiyalarni qayta qo'yish uchun.
+export function refreshTrafficLightGroup(group, data) {
+  const lightMeshes = group.userData.lightMeshes;
+  if (!lightMeshes) return;
+  for (let i = 0; i < 3; i++) {
+    const l = data.lights[i];
+    lightMeshes[i].position.set(l.dx, TL_POLE_H + l.dy, 0.2);
+  }
+}
+// Har freymda chaqiriladi: qaysi chiroq yonganini vaqt bo'yicha hisoblab, ranglarni yangilaydi.
+export function updateTrafficLightGroup(group, data, timeSec) {
+  const lightMeshes = group.userData.lightMeshes;
+  if (!lightMeshes) return;
+  const active = trafficActiveIndex(data.lights, data.start || 0, timeSec);
+  for (let i = 0; i < 3; i++) {
+    const l = data.lights[i];
+    lightMeshes[i].material.color.set(i === active ? TRAFFIC_LIGHT_HEX[l.color] : TRAFFIC_LIGHT_DIM[l.color]);
+  }
+}
 
 // Tayyor shahar modeli (ixtiyoriy, juda og'ir). Topilmasa xato tashlaydi.
 export async function loadCity(onProgress) {

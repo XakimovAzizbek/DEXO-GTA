@@ -8,6 +8,7 @@ import {
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
+  buildTrafficLightGroup, updateTrafficLightGroup,
 } from './models.js';
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
@@ -98,8 +99,19 @@ for (const [w, d, x, z] of [
 
 // ---------- Zona obyektlari ----------
 const byType = new Map();
+const trafficLightEntries = [];   // { group, data } — bittalab render qilinadi, chunki har birining chirog'i alohida yonib-o'chadi
 for (const o of objects) {
   if (o.t === 'spawn' || o.t === 'route_point') continue;
+  if (CATALOG[o.t].kind === 'traffic_light') {
+    const group = buildTrafficLightGroup(o);
+    group.position.set(o.x, 0, o.z);
+    group.rotation.set(0, o.r, 0);
+    group.scale.setScalar(o.s);
+    group.traverse((m) => { if (m.isMesh) m.castShadow = shadowsOn; });
+    scene.add(group);
+    trafficLightEntries.push({ group, data: o });
+    continue;
+  }
   const key = CATALOG[o.t].kind === 'ramp' ? `${o.t}:${o.y || 0}` : o.t;
   if (!byType.has(key)) byType.set(key, []);
   byType.get(key).push(o);
@@ -743,6 +755,8 @@ let prevVf = 0, tiltPitch = 0, tiltRoll = 0, tiltSlope = 0;
 function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
+
+  for (const tl of trafficLightEntries) updateTrafficLightGroup(tl.group, tl.data, now / 1000);
 
   if (!paused) {
     const steps = Math.max(1, Math.ceil(dt / (1 / 60)));

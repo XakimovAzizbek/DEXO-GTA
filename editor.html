@@ -66,6 +66,34 @@
         <button type="button" class="mini" data-act="dup">Nusxa</button>
         <button type="button" class="mini mini--danger" data-act="del">O‘chirish</button>
       </div>
+
+      <div class="lights" id="lightPanel" hidden>
+        <p class="hint">Chiroqni tanlang, so‘ng ekranning istalgan joyidan barmoq bilan tortib svetofor ustida joylashtiring. Har biriga necha soniya yonib turishini yozing.</p>
+        <div class="light-row" data-light="0">
+          <button type="button" class="mini light-pick" data-color="red">🔴 Qizil</button>
+          <input type="number" class="light-sec" inputmode="numeric" min="1" max="60" step="1">
+          <span class="light-unit">sek</span>
+        </div>
+        <div class="light-row" data-light="1">
+          <button type="button" class="mini light-pick" data-color="yellow">🟡 Sariq</button>
+          <input type="number" class="light-sec" inputmode="numeric" min="1" max="60" step="1">
+          <span class="light-unit">sek</span>
+        </div>
+        <div class="light-row" data-light="2">
+          <button type="button" class="mini light-pick" data-color="green">🟢 Yashil</button>
+          <input type="number" class="light-sec" inputmode="numeric" min="1" max="60" step="1">
+          <span class="light-unit">sek</span>
+        </div>
+        <div class="field">
+          <label for="lightStart">Boshlanishda yonadi</label>
+          <select id="lightStart">
+            <option value="0">Qizil</option>
+            <option value="1">Sariq</option>
+            <option value="2">Yashil</option>
+          </select>
+        </div>
+        <p class="hint hint--accent" id="lightDragHint" hidden>Endi ekranning istalgan joyiga bosib torting — tanlangan chiroq shu tomonga suriladi.</p>
+      </div>
     </div>
 
     <div class="panel" data-panel="camera" hidden>

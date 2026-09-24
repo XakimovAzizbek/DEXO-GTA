@@ -4,8 +4,9 @@ import {
   CATALOG, GROUPS, TINTS, ZONE_SIZE, HALF, MAX_OBJECTS, MIN_EXTENT, MAX_EXTENT, BOUNDS_STEP, normalizeBounds, RAMP_STEP, RAMP_MAX,
   loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
+  TRAFFIC_LIGHT_COLORS, TRAFFIC_HEAD, TRAFFIC_SEC_MIN, TRAFFIC_SEC_MAX,
 } from './data.js';
-import { getGeometry, getMaterial, loadCity } from './models.js';
+import { getGeometry, getMaterial, loadCity, buildTrafficLightGroup, refreshTrafficLightGroup, updateTrafficLightGroup } from './models.js';
 import { showSaveDialog } from './savefile.js';
 
 const $ = (id) => document.getElementById(id);
@@ -159,10 +160,12 @@ function applyTransform(mesh, data) {
 
 function addEntry(data) {
   const def = CATALOG[data.t];
-  const mesh = new THREE.Mesh(getGeometry(data.t, data.y || 0), getMaterial(def.kind, data.c));
+  const isTL = def.kind === 'traffic_light';
+  const mesh = isTL ? buildTrafficLightGroup(data) : new THREE.Mesh(getGeometry(data.t, data.y || 0), getMaterial(def.kind, data.c));
   applyTransform(mesh, data);
   const entry = { id: nextId++, data, mesh };
   mesh.userData.id = entry.id;
+  if (isTL) mesh.traverse((o) => { o.userData.id = entry.id; });   // guruh ichidagi har bir bo'lak ham tanlansin
   scene.add(mesh);
   entries.push(entry);
   updateStatus();
@@ -178,8 +181,12 @@ function removeEntry(entry) {
 
 function refreshEntry(entry) {
   applyTransform(entry.mesh, entry.data);
-  entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0);   // rampa balandligi o'zgarganda
-  entry.mesh.material = getMaterial(CATALOG[entry.data.t].kind, entry.data.c);
+  if (CATALOG[entry.data.t].kind === 'traffic_light') {
+    refreshTrafficLightGroup(entry.mesh, entry.data);
+  } else {
+    entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0);   // rampa balandligi o'zgarganda
+    entry.mesh.material = getMaterial(CATALOG[entry.data.t].kind, entry.data.c);
+  }
   if (helper && selectedId === entry.id) helper.update();
   updateSelInfo();
 }
@@ -227,8 +234,9 @@ function updateSelInfo() {
   const isBoard = !!entry && CATALOG[entry.data.t].kind === 'billboard';
   const isRoute = !!entry && CATALOG[entry.data.t].kind === 'route';
   const isRamp = !!entry && CATALOG[entry.data.t].kind === 'ramp';
+  const isTL = !!entry && CATALOG[entry.data.t].kind === 'traffic_light';
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}`
+    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
   const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
@@ -238,7 +246,46 @@ function updateSelInfo() {
   setDisabled('bigger', !entry || isRamp);
   const tintBtn = $('selActions').querySelector('[data-act="tint"]');
   if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : isRoute ? 'Marshrut №' : 'Rangi';   // reklama/marshrutda "rang" o'rniga tartib raqami almashadi
+  updateLightPanel(entry, isTL);
 }
+
+// ---------- Svetofor: chiroqlarni tanlash/surish/soniya paneli ----------
+let lightDragColor = null;   // hozir qaysi chiroq (red/yellow/green) sudrab joylashtirilyapti
+function updateLightPanel(entry, isTL) {
+  const panel = $('lightPanel');
+  if (!panel) return;
+  panel.hidden = !isTL;
+  if (!isTL) { lightDragColor = null; $('lightDragHint').hidden = true; return; }
+  entry.data.lights.forEach((l, i) => {
+    const row = panel.querySelector(`[data-light="${i}"]`);
+    row.querySelector('.light-sec').value = l.sec;
+    row.querySelector('.light-pick').classList.toggle('is-active', lightDragColor === l.color);
+  });
+  $('lightStart').value = String(entry.data.start || 0);
+  $('lightDragHint').hidden = !lightDragColor;
+}
+$('lightPanel').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.light-pick');
+  if (!btn) return;
+  lightDragColor = lightDragColor === btn.dataset.color ? null : btn.dataset.color;
+  updateSelInfo();
+});
+$('lightPanel').addEventListener('change', (ev) => {
+  const input = ev.target.closest('.light-sec');
+  const entry = getEntry(selectedId);
+  if (!input || !entry || CATALOG[entry.data.t].kind !== 'traffic_light') return;
+  const i = Number(input.closest('.light-row').dataset.light);
+  pushUndo();
+  entry.data.lights[i].sec = Math.max(TRAFFIC_SEC_MIN, Math.min(TRAFFIC_SEC_MAX, Math.round(Number(input.value) || TRAFFIC_SEC_MIN)));
+  scheduleSave();
+});
+$('lightStart').addEventListener('change', () => {
+  const entry = getEntry(selectedId);
+  if (!entry || CATALOG[entry.data.t].kind !== 'traffic_light') return;
+  pushUndo();
+  entry.data.start = Math.abs(Math.floor(Number($('lightStart').value) || 0)) % 3;
+  scheduleSave();
+});
 
 // ---------- Qo'yish ----------
 function placeAt(x, z) {
@@ -264,7 +311,7 @@ function placeAt(x, z) {
 }
 
 // Palitra
-const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', route: '#ff5252', spawn: '#ffc933' };
+const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', route: '#ff5252', spawn: '#ffc933', traffic_light: '#22262e' };
 const palette = $('palette');
 for (const group of GROUPS) {
   const label = document.createElement('span');
@@ -352,7 +399,9 @@ $('selActions').addEventListener('click', (ev) => {
     if (entries.length >= MAX_OBJECTS) { toast('Obyektlar soni chegaraga yetdi'); return; }
     if (entry.data.t === 'spawn') { toast('Boshlanish nuqtasi faqat bitta bo‘ladi'); return; }
     pushUndo();
-    const copy = addEntry({ ...entry.data, x: clampX(entry.data.x + 6), z: clampZ(entry.data.z + 6) });
+    const copyData = { ...entry.data, x: clampX(entry.data.x + 6), z: clampZ(entry.data.z + 6) };
+    if (copyData.lights) copyData.lights = copyData.lights.map((l) => ({ ...l }));
+    const copy = addEntry(copyData);
     selectEntry(copy.id);
     scheduleSave();
   } else if (act === 'del') {
@@ -379,7 +428,7 @@ function groundPoint(ev) {
 }
 function pickEntryId(ev) {
   setRay(ev);
-  const hits = raycaster.intersectObjects(entries.map((e) => e.mesh), false);
+  const hits = raycaster.intersectObjects(entries.map((e) => e.mesh), true);
   return hits.length ? hits[0].object.userData.id : null;
 }
 function moveEntry(entry, x, z) {
@@ -394,10 +443,15 @@ let gesture = null;
 canvas.addEventListener('pointerdown', (ev) => {
   pointers.add(ev.pointerId);
   if (pointers.size > 1) { gesture = null; return; }   // ikkinchi barmoq: kamera
-  gesture = { sx: ev.clientX, sy: ev.clientY, moved: false, drag: null };
-  if (tool === 'select' && selectedId != null && pickEntryId(ev) === selectedId) {
+  gesture = { sx: ev.clientX, sy: ev.clientY, moved: false, drag: null, lightDrag: null };
+  const entry = selectedId != null ? getEntry(selectedId) : null;
+  if (tool === 'select' && entry && CATALOG[entry.data.t].kind === 'traffic_light' && lightDragColor) {
+    // Chiroqni tanlab olib qo'ygandan keyin, ekranning istalgan joyidan tortib surish mumkin (joyi muhim emas).
+    const i = TRAFFIC_LIGHT_COLORS.indexOf(lightDragColor);
+    const l = entry.data.lights[i];
+    gesture.lightDrag = { i, startDx: l.dx, startDy: l.dy, pushed: false };
+  } else if (tool === 'select' && selectedId != null && pickEntryId(ev) === selectedId) {
     const gp = groundPoint(ev);
-    const entry = getEntry(selectedId);
     if (gp && entry) gesture.drag = { dx: entry.data.x - gp.x, dz: entry.data.z - gp.z, pushed: false };
   }
 });
@@ -405,6 +459,19 @@ canvas.addEventListener('pointerdown', (ev) => {
 canvas.addEventListener('pointermove', (ev) => {
   if (!gesture || pointers.size > 1) return;
   if (!gesture.moved && Math.hypot(ev.clientX - gesture.sx, ev.clientY - gesture.sy) > 8) gesture.moved = true;
+  if (gesture.lightDrag && gesture.moved) {
+    const entry = getEntry(selectedId);
+    if (!entry) return;
+    if (!gesture.lightDrag.pushed) { pushUndo(); gesture.lightDrag.pushed = true; }
+    const k = 0.015;   // ekran pikselini metrga aylantirish tezligi
+    const dx = (ev.clientX - gesture.sx) * k;
+    const dy = -(ev.clientY - gesture.sy) * k;
+    const l = entry.data.lights[gesture.lightDrag.i];
+    l.dx = Math.max(TRAFFIC_HEAD.minDx, Math.min(TRAFFIC_HEAD.maxDx, gesture.lightDrag.startDx + dx));
+    l.dy = Math.max(TRAFFIC_HEAD.minDy, Math.min(TRAFFIC_HEAD.maxDy, gesture.lightDrag.startDy + dy));
+    refreshEntry(entry);
+    return;
+  }
   if (gesture.drag && gesture.moved) {
     const gp = groundPoint(ev);
     const entry = getEntry(selectedId);
@@ -420,6 +487,7 @@ function endPointer(ev) {
   const g = gesture;
   if (pointers.size === 0) gesture = null;
   if (!g || !wasSingle) return;
+  if (g.lightDrag && g.moved) { scheduleSave(); return; }
   if (g.drag && g.moved) { scheduleSave(); return; }
   if (g.moved || ev.type === 'pointercancel') return;
   if (tool === 'place') {
@@ -569,9 +637,13 @@ for (const o of startZone.objects) addEntry(normalizeObject(o));
 updateStatus();
 updateSelInfo();
 
-renderer.setAnimationLoop(() => {
+renderer.setAnimationLoop((now) => {
   controls.update();
   if (helper) helper.update();
+  const t = now / 1000;
+  for (const e of entries) {
+    if (CATALOG[e.data.t].kind === 'traffic_light') updateTrafficLightGroup(e.mesh, e.data, t);
+  }
   renderer.render(scene, camera);
 });
 

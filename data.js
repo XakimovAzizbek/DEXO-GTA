@@ -233,6 +233,7 @@ export const CATALOG = {
   land_dirt:     { label: 'Tuproq maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
   land_asphalt:  { label: 'Asfalt maydon',     group: 'Yer',       kind: 'land',     hw: 20, hd: 20 },
   billboard:     { label: 'Reklama ekrani',    group: 'Reklama',   kind: 'billboard', hw: 1.1, hd: 0.8 },
+  traffic_light: { label: 'Svetofor',          group: 'Yo‘llar',   kind: 'traffic_light', hw: 0.5, hd: 0.5 },
   route_point:   { label: 'Marshrut nuqtasi',  group: 'Marshrut',  kind: 'route' },
   spawn:         { label: 'Boshlanish nuqtasi', group: 'Belgi',    kind: 'spawn' },
 };
@@ -248,6 +249,7 @@ export const TINTS = {
   ridge:    ['#ffffff', '#e6ece0', '#eadfd2', '#dfe6ee'],
   land:     ['#ffffff'],
   billboard: Array.from({ length: 10 }, () => '#ffffff'),
+  traffic_light: ['#ffffff'],
   route:    ['#ff5252', '#4b7bec', '#f7b731', '#20bf6b', '#a55eea', '#fd9644', '#26de81', '#fc5c65', '#45aaf2', '#eb3b5a', '#8854d0', '#3867d6'],
   spawn: ['#ffffff'],
 };
@@ -266,6 +268,47 @@ export function isValidZone(z) {
 
 export const RAMP_STEP = 3;
 export const RAMP_MAX = 30;
+
+// ---------- Svetofor: 3 ta chiroq (qizil/sariq/yashil), har birining o'z joyi va soniyasi ----------
+export const TRAFFIC_LIGHT_COLORS = ['red', 'yellow', 'green'];
+export const TRAFFIC_LIGHT_HEX = { red: '#ff3b30', yellow: '#ffcc00', green: '#33cc66' };
+export const TRAFFIC_LIGHT_DIM = { red: '#4a1210', yellow: '#4a3a10', green: '#123a1f' };
+// Chiroqni qutining ichida qo'lda surish uchun chegara (mahalliy koordinata, metr).
+export const TRAFFIC_HEAD = { minDx: -0.3, maxDx: 0.3, minDy: 0, maxDy: 2.2 };
+export const TRAFFIC_SEC_MIN = 1;
+export const TRAFFIC_SEC_MAX = 60;
+
+export function defaultTrafficLights() {
+  return [
+    { color: 'red', dx: 0, dy: 1.8, sec: 5 },
+    { color: 'yellow', dx: 0, dy: 1.1, sec: 2 },
+    { color: 'green', dx: 0, dy: 0.4, sec: 5 },
+  ];
+}
+function normalizeTrafficLight(o, def) {
+  const num = (v, d, lo, hi) => { const n = Number(v); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; };
+  return {
+    color: def.color,
+    dx: num(o && o.dx, def.dx, TRAFFIC_HEAD.minDx, TRAFFIC_HEAD.maxDx),
+    dy: num(o && o.dy, def.dy, TRAFFIC_HEAD.minDy, TRAFFIC_HEAD.maxDy),
+    sec: num(o && o.sec, def.sec, TRAFFIC_SEC_MIN, TRAFFIC_SEC_MAX),
+  };
+}
+// Berilgan vaqt (soniya)da qaysi chiroq (0/1/2 indeks) yonganini hisoblaydi.
+// "start" - qaysi chiroqdan boshlab yonadi (0=qizil,1=sariq,2=yashil); shu orqali
+// chorrahadagi qarama-qarshi svetoforlarga boshqa "start" berib, ularni navbat bilan yondirish mumkin.
+export function trafficActiveIndex(lights, start, timeSec) {
+  const total = lights.reduce((a, l) => a + l.sec, 0) || 1;
+  let t = ((timeSec % total) + total) % total;
+  const s = ((start % 3) + 3) % 3;
+  for (let k = 0; k < 3; k++) {
+    const idx = (s + k) % 3;
+    if (t < lights[idx].sec) return idx;
+    t -= lights[idx].sec;
+  }
+  return s;
+}
+
 export function normalizeObject(o) {
   const def = CATALOG[o.t];
   const kind = def.kind;
@@ -282,6 +325,12 @@ export function normalizeObject(o) {
   if (kind === 'ramp') {
     const min = def.rise === 0 ? RAMP_STEP : 0;
     out.y = Math.min(RAMP_MAX, Math.max(min, Math.round((Number(o.y) || 0) / RAMP_STEP) * RAMP_STEP));
+  }
+  if (kind === 'traffic_light') {
+    const defs = defaultTrafficLights();
+    const srcLights = Array.isArray(o.lights) ? o.lights : [];
+    out.lights = defs.map((def2, i) => normalizeTrafficLight(srcLights[i], def2));
+    out.start = Math.abs(Math.floor(Number(o.start) || 0)) % 3;
   }
   return out;
 }
