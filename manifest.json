@@ -1,20 +1,43 @@
 {
-  "name": "DEXO GTA",
+  "nom": "DEXO GTA",
   "short_name": "DEXO GTA",
-  "description": "Uy qo‘y, daraxt ek, o‘zing qurgan shaharda hayda.",
+  "description": "Uy qo'y, daraxt ek, o'zing qurgan shaharda hayda.",
   "start_url": "index.html",
-  "scope": "./",
-  "display": "fullscreen",
-  "display_override": ["fullscreen", "standalone"],
-  "orientation": "landscape",
+  "doira": "./",
+  "displey": "to'liq ekran",
+  "display_override": [
+    "to'liq ekran",
+    "mustaqil"
+  ],
+  "orientatsiya": "landshaft",
   "background_color": "#1b1f27",
-  "theme_color": "#1b1f27",
+  "mavzu_rangi": "#1b1f27",
   "lang": "uz",
   "dir": "ltr",
-  "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  "belgilar": [
+    {
+      "src": "icons/icon-192.png",
+      "o'lchamlar": "192x192",
+      "turi": "rasm/png",
+      "maqsad": "har qanday"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "o'lchamlar": "512x512",
+      "turi": "rasm/png",
+      "maqsad": "har qanday"
+    },
+    {
+      "src": "icons/icon-maskable-192.png",
+      "o'lchamlar": "192x192",
+      "turi": "rasm/png",
+      "maqsad": "niqoblanadigan"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "o'lchamlar": "512x512",
+      "turi": "rasm/png",
+      "maqsad": "niqoblanadigan"
+    }
   ]
 }
