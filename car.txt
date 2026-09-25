@@ -66,6 +66,7 @@ car: chevrolet_spark-v1.glb
 camdist: 8
 camheight: 3.5
 aimy: 3.2
+light: shape=round func=brake color=#ff2a2a x=0.7 y=1.3 z=-2.22 size=0.35 mirror=1
 
 name: ONIX
 car: chevrolet_onix-v1.glb
@@ -106,3 +107,4 @@ fov: 65
 fovspeed: 0.05
 light: shape=round func=brake color=#ff2a2a x=0.86 y=1.28 z=-2.2 size=0.75 mirror=1
 light: shape=square func=reverse color=#ffffff x=0.84 y=1.08 z=-2.22 size=0.75 mirror=1
+light: shape=round func=button color=#ffffff x=1.04 y=0.96 z=2.2 size=1 mirror=1
