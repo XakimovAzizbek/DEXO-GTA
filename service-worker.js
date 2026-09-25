@@ -5,11 +5,11 @@ const VERSION = 'v1';
 const CACHE_NAME = `dexo-gta-${VERSION}`;
 
 // Ilovaning o'zi (HTML/CSS/JS): birinchi tashrifda oldindan keshlanadi
+// FAQAT foydalanuvchiga tegishli sahifalar. Zona/mashina qurish (editor.html, car-editor.html) — buning
+// egasi bo'lgan siz uchun; ular saytda qolaveradi, lekin PWA ilova sifatida o'rnatilmaydi va keshga oldindan yuklanmaydi.
 const APP_SHELL = [
   'index.html', 'index.css', 'index.js',
   'car.html', 'car.css', 'car.js',
-  'car-editor.html', 'car-editor.css', 'car-editor.js',
-  'editor.html', 'editor.css', 'editor.js',
   'game.html', 'game.css', 'game.js',
   'settings.html', 'settings.css', 'settings.js',
   'common.css', 'data.js', 'models.js', 'lights.js', 'weather.js', 'botFleet.js', 'savefile.js',

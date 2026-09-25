@@ -36,12 +36,6 @@
   line-height: 0.86;
   letter-spacing: 0.01em;
 }
-.tagline {
-  margin-top: 16px;
-  max-width: 30ch;
-  color: #d5eee5;
-}
-
 .menu {
   display: grid;
   gap: 14px;
