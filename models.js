@@ -657,6 +657,42 @@ export async function loadCarModel(car, onProgress) {
   return fitCarModel(await loadCarScene(car, onProgress), car);
 }
 
+// airport.txt yozuvi (name, file, kind, length, rotate, lift ...) uchun GLB yuklaydi.
+// Fayl avval airport/ , keyin cars/ , keyin asosiy papkadan qidiriladi.
+export async function loadAirportScene(entry, onProgress) {
+  const loader = await makeGLTFLoader();
+  let gltf = null, lastError = null;
+  for (const path of [`airport/${entry.file}`, `cars/${entry.file}`, entry.file]) {
+    try {
+      gltf = await loader.loadAsync(path, (e) => {
+        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+      });
+      break;
+    } catch (err) { lastError = err; }
+  }
+  if (!gltf) throw lastError || new Error('Samolyot/vertolyot fayli topilmadi');
+
+  const model = gltf.scene;
+  model.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.castShadow = true;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const m of mats) {
+      if (!m) continue;
+      if (m.transmission > 0) {
+        m.transmission = 0;
+        m.transparent = true;
+        m.opacity = Math.min(m.opacity, 0.4);
+      }
+      if (m.isMeshStandardMaterial) m.envMapIntensity = 1;
+    }
+  });
+  return model;
+}
+export async function loadAirportModel(entry, onProgress) {
+  return fitCarModel(await loadAirportScene(entry, onProgress), entry);
+}
+
 // Modelni xotiradan tozalash (mashina almashtirilganda)
 export function disposeModel(root) {
   root.traverse((obj) => {
