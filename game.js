@@ -444,7 +444,7 @@ function setVehicle(mode) {
   Object.assign(CAR, VEHICLE_TYPES[mode]);
   for (const k of VEHICLE_ORDER) VEHICLE_GROUPS[k].visible = k === mode;
   vehicleBtn.textContent = `${VEHICLE_ICON[mode]} ${VEHICLE_LABEL[mode]}`;
-  flightPad.style.display = CAR.flying ? 'flex' : 'none';
+  flightPad.style.display = vehicleMode === 'heli' ? 'flex' : 'none';   // faqat vertolyotda: samolyot balandligi tezlikdan o'zi hisoblanadi
   car.vx = 0; car.vz = 0; car.vy = 0; car.steer = 0;
   if (CAR.flying && !wasFlying) {
     car.y = Math.max(car.y, (ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0) + 6);
@@ -657,9 +657,8 @@ function stepFly(dt) {
   let climb = 0, minY;
   if (vehicleMode === 'plane') {
     const lift = clamp(Math.abs(vf) / CAR.stall, 0, 1.3);         // stall tezligidan past bo'lsa ko'tarolmaydi
-    if (input.up) climb += CAR.climb * lift;
-    if (input.down) climb -= CAR.climb;
-    if (lift < 1) climb -= (1 - lift) * 6;                        // real stall: tezlik yetmasa avtomatik pasayadi
+    climb = (lift - 1) * CAR.climb;                                // tugma yo'q: tezlik oshsa o'zi ko'tariladi, pasaysa o'zi tushadi
+    if (lift < 1) climb -= (1 - lift) * 6;                        // real stall: tezlik yetmasa tezroq pasayadi
     minY = ground;                                                 // qo'nish uchun pastki chegara yo'q
   } else {
     if (input.up) climb += CAR.climb;                              // kollektiv: to'g'ridan-to'g'ri ko'tarilish
@@ -797,7 +796,12 @@ function setPaused(value) {
 }
 $('pauseBtn').addEventListener('click', () => setPaused(true));
 $('resumeBtn').addEventListener('click', () => setPaused(false));
-$('respawnBtn').addEventListener('click', () => { respawn(); setPaused(false); });
+$('vehicleSwitchBtn').addEventListener('click', () => {
+  unlockCarAudio();
+  unlockAirportAudio();
+  setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
+  setPaused(false);
+});
 document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
 // ---------- Radar ----------
