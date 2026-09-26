@@ -8,6 +8,8 @@ aimy: 3.5
 fov: 61
 fovspeed: 0.05
 follow: 20
+light: shape=round func=brake color=#ff2a2a x=0.66 y=0.78 z=-2.02 size=0.4 mirror=1
+light: shape=round func=brake color=#ff2a2a x=0.66 y=0.94 z=-2.06 size=0.4 mirror=1
 
 name: KIA K5
 car: kia_k5.glb
