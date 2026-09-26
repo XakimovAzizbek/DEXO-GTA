@@ -1,0 +1,110 @@
+html, body { height: 100%; overflow: hidden; }
+
+.ed-stage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) 14px max(12px, env(safe-area-inset-bottom));
+}
+
+.ed-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+.ed-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 2px solid var(--paint);
+  border-radius: 10px;
+  text-decoration: none;
+  font-size: 20px;
+  flex: none;
+}
+.ed-title {
+  font-family: var(--display);
+  font-weight: 800;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.ed-picker {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.ed-hint { color: var(--kerb); font-size: 14px; }
+.ed-card {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 2px solid var(--asphalt-line);
+  border-radius: 999px;
+  background: var(--asphalt-raise);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ed-card.is-selected { border-color: var(--hazard); background: rgba(255, 201, 51, 0.14); }
+
+.ed-view {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #7fb8e6 0%, #cfe6f5 60%, #6f9a55 60%, #567c43 100%);
+}
+.ed-view canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.ed-drag-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(10, 12, 16, 0.5);
+  color: var(--paint);
+  font-size: 12px;
+}
+
+.ed-tools {
+  flex: none;
+  display: grid;
+  gap: 8px;
+}
+.ed-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.ed-value {
+  min-width: 64px;
+  text-align: center;
+  font-weight: 700;
+  font-family: var(--display);
+  font-size: 18px;
+}
+.mini {
+  min-height: 46px;
+  padding: 0 18px;
+  border: 2px solid var(--kerb);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--paint);
+  font-weight: 600;
+  font-size: 16px;
+}
+.mini:active { background: rgba(255, 255, 255, 0.1); }
+.ed-save-row { margin-top: 2px; }
+.status { min-height: 1.3em; color: var(--hazard); font-weight: 600; font-size: 14px; text-align: center; }

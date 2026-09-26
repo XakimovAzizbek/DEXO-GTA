@@ -68,6 +68,12 @@ export function unlockCarAudio() {
   } catch { /* Web Audio yo'q — o'yin ovozsiz davom etadi */ }
 }
 
+// Boshqa ulov (samolyot/vertolyot) faol bo'lganda mashina dvigateli ovozini o'chirish/qaytarish uchun.
+export function setCarAudioActive(active) {
+  if (!ctx || !nodes) return;
+  nodes.master.gain.setTargetAtTime(active ? 0.55 : 0, ctx.currentTime, 0.15);
+}
+
 // Har freymda chaqiriladi. speed: m/s (musbat), maxSpeed: CAR.maxSpeed, gas/brake: input holati.
 export function updateCarAudio(speed, maxSpeed, gas, brake) {
   if (!ctx || !nodes) return;

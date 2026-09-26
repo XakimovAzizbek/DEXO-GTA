@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1b1f27">
+  <title>Samolyot/Vertolyot muharriri | DEXO GTA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="common.css">
+  <link rel="stylesheet" href="airport-editor.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="ed-stage">
+    <header class="ed-top">
+      <a class="ed-back" href="airport.html" aria-label="Orqaga">←</a>
+      <h1 class="ed-title">Samolyot/Vertolyot muharriri</h1>
+    </header>
+
+    <div class="ed-picker" id="picker">
+      <p class="ed-hint">Ro‘yxat yuklanmoqda…</p>
+    </div>
+
+    <div class="ed-view">
+      <canvas id="preview"></canvas>
+      <p class="ed-drag-hint">Barmoq bilan aylantirish, ikki barmoq bilan yaqinlashtirish</p>
+    </div>
+
+    <div class="ed-tools" id="tools" hidden>
+      <div class="ed-row">
+        <button class="mini" type="button" id="smallerBtn">− Kichik</button>
+        <span class="ed-value" id="lengthValue">— m</span>
+        <button class="mini" type="button" id="biggerBtn">+ Katta</button>
+      </div>
+      <div class="ed-row">
+        <button class="mini" type="button" id="rotBtn">⟲ Burish</button>
+        <span class="ed-value" id="rotValue">0°</span>
+      </div>
+      <div class="ed-row ed-save-row">
+        <button class="btn btn--primary" type="button" id="saveBtn">Saqlash</button>
+      </div>
+      <p class="status" id="status"></p>
+    </div>
+  </div>
+  <script type="module" src="airport-editor.js"></script>
+</body>
+</html>

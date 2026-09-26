@@ -5,15 +5,18 @@ import {
   CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
   makeRamp, groundHeightAt, rampSurfaceNear,
   buildRoutes, pointOnRoute, LANE_OFFSET, stepBot, fetchBotConfig,
+  fetchAirportList, loadSelectedAirportName, AIRPORT_DEFAULTS, loadAirportDraft,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
-  buildTrafficLightGroup, updateTrafficLightGroup,
+  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel,
 } from './models.js';
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
-import { unlockCarAudio, updateCarAudio } from './carAudio.js';
+import { unlockCarAudio, updateCarAudio, setCarAudioActive } from './carAudio.js';
+import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
+
 
 const $ = (id) => document.getElementById(id);
 const settings = loadSettings();
@@ -187,6 +190,82 @@ function buildCar() {
   return { group, wheels, frontPivots: pivots };
 }
 
+// ---------- Vertolyot va samolyot (kod bilan yasalgan, oddiy past-poligonli modellar) ----------
+function buildHeli() {
+  const group = new THREE.Group();
+  const lambert = (color) => new THREE.MeshLambertMaterial({ color });
+  const bodyMat = lambert('#3f6fae');
+  const tailMat = lambert('#33578c');
+  const glassMat = lambert('#20303f');
+  const bladeMat = lambert('#1c1f26');
+  const skidMat = lambert('#22262e');
+
+  const add = (geo, mat, x, y, z, parent = group) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = shadowsOn;
+    parent.add(m);
+    return m;
+  };
+
+  add(new THREE.BoxGeometry(1.7, 1.5, 3.2), bodyMat, 0, 1.1, -0.3);
+  add(new THREE.BoxGeometry(1.3, 1.0, 1.2), glassMat, 0, 1.15, 1.3);
+  add(new THREE.BoxGeometry(0.5, 0.55, 3.0), tailMat, 0, 1.25, 2.9);
+  add(new THREE.BoxGeometry(0.16, 1.0, 0.9), tailMat, 0, 1.9, 4.3);
+  for (const sx of [-1, 1]) add(new THREE.BoxGeometry(0.15, 0.16, 3.2), skidMat, sx * 0.85, 0.2, -0.3);
+  for (const [sx, sz] of [[-0.85, -1.6], [-0.85, 1.0], [0.85, -1.6], [0.85, 1.0]]) {
+    add(new THREE.BoxGeometry(0.12, 0.55, 0.12), skidMat, sx, 0.5, sz);
+  }
+
+  const rotor = new THREE.Group();
+  rotor.position.set(0, 2.1, -0.3);
+  add(new THREE.BoxGeometry(0.14, 0.06, 4.2), bladeMat, 0, 0, 0, rotor);
+  add(new THREE.BoxGeometry(4.2, 0.06, 0.14), bladeMat, 0, 0, 0, rotor);
+  group.add(rotor);
+
+  const tailRotor = new THREE.Group();
+  tailRotor.position.set(0.1, 1.9, 4.35);
+  tailRotor.rotation.z = Math.PI / 2;
+  add(new THREE.BoxGeometry(0.06, 0.6, 0.06), bladeMat, 0, 0, 0, tailRotor);
+  group.add(tailRotor);
+
+  return { group, wheels: [], frontPivots: [], spin: rotor, spin2: tailRotor };
+}
+
+function buildPlane() {
+  const group = new THREE.Group();
+  const lambert = (color) => new THREE.MeshLambertMaterial({ color });
+  const bodyMat = lambert('#c94f4f');
+  const wingMat = lambert('#8a2f2f');
+  const glassMat = lambert('#20303f');
+  const propMat = lambert('#1c1f26');
+  const hubMat = lambert('#3a3f47');
+
+  const add = (geo, mat, x, y, z, parent = group) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = shadowsOn;
+    parent.add(m);
+    return m;
+  };
+
+  add(new THREE.BoxGeometry(1.1, 1.1, 4.8), bodyMat, 0, 1.0, 0);
+  add(new THREE.BoxGeometry(0.85, 0.85, 0.9), bodyMat, 0, 1.0, 2.7);
+  add(new THREE.BoxGeometry(0.9, 0.55, 1.3), glassMat, 0, 1.5, 0.2);
+  add(new THREE.BoxGeometry(6.6, 0.16, 1.3), wingMat, 0, 1.15, -0.2);
+  add(new THREE.BoxGeometry(2.2, 0.14, 0.9), wingMat, 0, 1.35, -2.1);
+  add(new THREE.BoxGeometry(0.16, 1.05, 1.0), wingMat, 0, 1.9, -2.15);
+  add(new THREE.CylinderGeometry(0.28, 0.28, 0.5, 10).rotateX(Math.PI / 2), hubMat, 0, 1.0, 3.1);
+
+  const prop = new THREE.Group();
+  prop.position.set(0, 1.0, 3.4);
+  add(new THREE.BoxGeometry(0.1, 1.5, 0.05), propMat, 0, 0, 0, prop);
+  add(new THREE.BoxGeometry(1.5, 0.1, 0.05), propMat, 0, 0, 0, prop);
+  group.add(prop);
+
+  return { group, wheels: [], frontPivots: [], spin: prop };
+}
+
 // ---------- Botlar (haqiqiy GLB modellar, InstancedMesh) ----------
 let fleet = null;
 let botCfg = null;
@@ -278,8 +357,35 @@ const carRoot = new THREE.Group();
 const carTilt = new THREE.Group();
 carRoot.add(carTilt);
 scene.add(carRoot);
+
+// ---------- Ulov turlari: Mashina / Vertolyot / Samolyot (garajdagi kabi almashtiriladi) ----------
+const carGroup = new THREE.Group();     // haqiqiy/fallback mashina shu yerga qo'shiladi
+const heliGroup = new THREE.Group();
+const planeGroup = new THREE.Group();
+carTilt.add(carGroup, heliGroup, planeGroup);
+heliGroup.visible = false;
+planeGroup.visible = false;
+const heliBuilt = buildHeli();
+heliGroup.add(heliBuilt.group);
+const planeBuilt = buildPlane();
+planeGroup.add(planeBuilt.group);
+const VEHICLE_GROUPS = { car: carGroup, heli: heliGroup, plane: planeGroup };
+const VEHICLE_SPIN = { heli: [heliBuilt.spin, heliBuilt.spin2], plane: [planeBuilt.spin] };
+const VEHICLE_LABEL = { car: 'Mashina', heli: 'Vertolyot', plane: 'Samolyot' };
+const VEHICLE_TYPES = {
+  car: { maxSpeed: 42, reverseMax: 12, accel: 18, brake: 34, flying: false, maxAlt: Infinity, climb: 0, stall: 0 },
+  heli: { maxSpeed: 24, reverseMax: 10, accel: 9, brake: 12, flying: true, maxAlt: 140, climb: 9, stall: 0 },
+  plane: { maxSpeed: 55, reverseMax: 8, accel: 8, brake: 10, flying: true, maxAlt: 220, climb: 7, stall: 16 },
+};
+let vehicleMode = 'car';
 let carModel = { wheels: [], frontPivots: [] };
 let carProfile = { ...CAR_DEFAULTS };
+let airportProfiles = { heli: { ...AIRPORT_DEFAULTS }, plane: { ...AIRPORT_DEFAULTS } };
+function currentProfile() {
+  if (vehicleMode === 'heli') return airportProfiles.heli;
+  if (vehicleMode === 'plane') return airportProfiles.plane;
+  return carProfile;
+}
 
 let carLights = null;
 let lightsOn = weather.night;
@@ -292,9 +398,65 @@ lightBtn.addEventListener('click', toggleLights);
 
 function useFallbackCar() {
   const built = buildCar();
-  carTilt.add(built.group);
+  carGroup.add(built.group);
   carModel = built;
 }
+
+// ---------- Ulovni almashtirish tugmasi va tepa/pastga tugmalari (kod bilan yaratiladi) ----------
+const vehicleBtn = document.createElement('button');
+vehicleBtn.type = 'button';
+vehicleBtn.textContent = `🚗 ${VEHICLE_LABEL.car}`;
+Object.assign(vehicleBtn.style, {
+  position: 'fixed', top: '12px', left: '50%', transform: 'translateX(-50%)', zIndex: 30,
+  padding: '8px 16px', borderRadius: '999px', border: '1px solid rgba(255,255,255,.35)',
+  background: 'rgba(20,22,28,.72)', color: '#fff', font: '600 14px/1.2 system-ui, sans-serif', cursor: 'pointer',
+});
+document.body.appendChild(vehicleBtn);
+
+const flightPad = document.createElement('div');
+Object.assign(flightPad.style, {
+  position: 'fixed', right: '14px', bottom: '230px', zIndex: 30, display: 'none',   // pad--right (gaz/tormoz/qo'l tormozi) balandligidan yuqorida - ustma-ust tushmasin
+  flexDirection: 'column', gap: '10px',
+});
+function makeFlightBtn(label, key) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'ctl';
+  b.dataset.key = key;
+  b.textContent = label;
+  Object.assign(b.style, {
+    width: '56px', height: '56px', borderRadius: '50%', border: '1px solid rgba(255,255,255,.35)',
+    background: 'rgba(20,22,28,.72)', color: '#fff', font: '700 20px/1 system-ui, sans-serif', cursor: 'pointer',
+  });
+  flightPad.appendChild(b);
+  return b;
+}
+const upBtn = makeFlightBtn('▲', 'up');
+const downBtn = makeFlightBtn('▼', 'down');
+document.body.appendChild(flightPad);
+
+const VEHICLE_ORDER = ['car', 'heli', 'plane'];
+const VEHICLE_ICON = { car: '🚗', heli: '🚁', plane: '✈️' };
+function setVehicle(mode) {
+  if (!VEHICLE_TYPES[mode] || mode === vehicleMode) return;
+  const wasFlying = VEHICLE_TYPES[vehicleMode].flying;
+  vehicleMode = mode;
+  Object.assign(CAR, VEHICLE_TYPES[mode]);
+  for (const k of VEHICLE_ORDER) VEHICLE_GROUPS[k].visible = k === mode;
+  vehicleBtn.textContent = `${VEHICLE_ICON[mode]} ${VEHICLE_LABEL[mode]}`;
+  flightPad.style.display = mode === 'heli' ? 'flex' : 'none';   // vertolyotda kollektiv (▲▼) kerak, samolyotda esa balandlik avtomatik (tezlikka bog'liq)
+  car.vx = 0; car.vz = 0; car.vy = 0; car.steer = 0;
+  if (CAR.flying && !wasFlying) {
+    car.y = Math.max(car.y, (ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0) + 6);
+  } else if (!CAR.flying && wasFlying) {
+    car.y = ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0;
+  }
+}
+vehicleBtn.addEventListener('click', () => {
+  unlockCarAudio();
+  unlockAirportAudio();
+  setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
+});
 
 async function setupCar(setText, setProgress) {
   const cars = await fetchCarList();
@@ -304,14 +466,14 @@ async function setupCar(setText, setProgress) {
   if (entry) {
     carProfile = entry;
     carLights = createCarLights(entry.lights, { length: entry.length, lift: entry.lift });
-    carTilt.add(carLights.group);
+    carGroup.add(carLights.group);
     lightBtn.hidden = !carLights.hasButton;
     lightBtn.classList.toggle('is-on', lightsOn);
     setText(`Mashina yuklanmoqda: ${entry.name}…`);
     try {
       const model = await loadCarModel(entry, setProgress);
       model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
-      carTilt.add(model);
+      carGroup.add(model);
       return;
     } catch (err) {
       console.warn('Mashina modeli yuklanmadi:', err);
@@ -322,12 +484,44 @@ async function setupCar(setText, setProgress) {
   useFallbackCar();
 }
 
+// Airport.txt dagi tanlangan (yoki mos turdagi birinchi) samolyot/vertolyotni GLB sifatida yuklaydi.
+// Muvaffaqiyatsiz bo'lsa, kod bilan yasalgan oddiy model (heliBuilt/planeBuilt) ko'rinishda qoladi.
+async function setupAirport(setText, setProgress) {
+  const list = await fetchAirportList();
+  if (!list.length) return;
+  const wanted = loadSelectedAirportName();
+  const chosen = list.find((a) => a.name === wanted) || null;
+  const byKind = {};
+  if (chosen) byKind[chosen.kind] = chosen;
+  for (const a of list) if (!byKind[a.kind]) byKind[a.kind] = a;   // boshqa turga (tanlanmagan) birinchi mos yozuv
+
+  const jobs = [
+    ['helicopter', 'heli', heliGroup, heliBuilt],
+    ['airplane', 'plane', planeGroup, planeBuilt],
+  ];
+  for (const [kind, mode, group, fallback] of jobs) {
+    const entry = byKind[kind];
+    if (!entry) continue;
+    const draft = useDraft ? loadAirportDraft(entry.name) : {};
+    const profile = { ...AIRPORT_DEFAULTS, ...entry, ...draft };
+    airportProfiles[mode] = profile;
+    setText(`${VEHICLE_LABEL[mode]} yuklanmoqda: ${entry.name}…`);
+    try {
+      const model = await loadAirportModel(profile, setProgress);
+      model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
+      group.add(model);
+      fallback.group.visible = false;   // GLB muvaffaqiyatli - kod bilan yasalgan zaxira modelni yashiramiz
+    } catch (err) {
+      console.warn(`${VEHICLE_LABEL[mode]} modeli yuklanmadi:`, err);
+    }
+  }
+}
+
 // ---------- Fizika ----------
 const spawn = objects.find((o) => o.t === 'spawn') || { x: 0, z: 0, r: 0 };
 const car = { x: 0, z: 0, y: 0, vy: 0, h: 0, vx: 0, vz: 0, steer: 0 };
 const CAR = {
-  maxSpeed: 42, reverseMax: 12, accel: 18, brake: 34, radius: 1.05,
-  circles: [1.4, 0, -1.4],
+  radius: 1.05, circles: [1.4, 0, -1.4], ...VEHICLE_TYPES.car,
 };
 let camHeading = 0;
 
@@ -340,7 +534,7 @@ function respawn() {
   placeCamera(true);
 }
 
-const input = { left: false, right: false, gas: false, brake: false, hand: false };
+const input = { left: false, right: false, gas: false, brake: false, hand: false, up: false, down: false };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function surfaceSlope(fx, fz) {
@@ -418,6 +612,81 @@ function stepCar(dt) {
   stepVertical(dt);
 }
 
+// Uchish fizikasi: vertolyot va samolyot endi boshqacha "his qilinadi" - haqiqiy hayotdagidek.
+// Vertolyot: kollektiv (▲▼) to'g'ridan-to'g'ri ko'taradi/tushiradi, joyida ham (tezlik 0 da) to'liq buriladi (hover).
+// Samolyot: ko'tarilish uchun tezlik (stall) kerak - sekin bo'lsa burilish zaifroq va balandlik o'zi pasayadi (real stall).
+function stepFly(dt) {
+  const fx = Math.sin(car.h), fz = Math.cos(car.h);
+  const rx = -Math.cos(car.h), rz = Math.sin(car.h);
+  let vf = car.vx * fx + car.vz * fz;
+  let vr = car.vx * rx + car.vz * rz;
+
+  if (input.gas) vf += CAR.accel * (1 - clamp(vf / CAR.maxSpeed, 0, 1)) * dt;
+  else if (input.brake) vf -= CAR.brake * dt;
+  else { const drag = (vehicleMode === 'plane' ? 1.5 : 4) * dt; vf -= Math.sign(vf) * Math.min(Math.abs(vf), drag); }   // samolyot havoda inersiyani ko'proq saqlaydi
+  vf = clamp(vf, -CAR.reverseMax, CAR.maxSpeed);
+
+  vr *= Math.exp(-6 * dt);
+
+  const target = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  car.steer += (target - car.steer) * Math.min(1, dt * 4);
+  // Vertolyot dumaloq rotor tufayli joyida ham to'liq buriladi; samolyotga qanotdan foyda olish uchun tezlik kerak.
+  const speedFactor = vehicleMode === 'heli' ? 1 : clamp(Math.abs(vf) / Math.max(1, CAR.stall), 0.15, 1);
+  const yaw = car.steer * 1.4 * settings.sensitivity * speedFactor * (vf >= 0 ? 1 : -1);
+  car.h -= yaw * dt;
+
+  const nfx = Math.sin(car.h), nfz = Math.cos(car.h);
+  const nrx = -Math.cos(car.h), nrz = Math.sin(car.h);
+  car.vx = nfx * vf + nrx * vr;
+  car.vz = nfz * vf + nrz * vr;
+  car.x += car.vx * dt;
+  car.z += car.vz * dt;
+
+  const limE = bounds.e - 2, limW = -bounds.w + 2, limS = bounds.s - 2, limN = -bounds.n + 2;
+  car.x = clamp(car.x, limW, limE);
+  car.z = clamp(car.z, limN, limS);
+
+  const ground = ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0;
+  let climb = 0, minY;
+  if (vehicleMode === 'plane') {
+    // Tugma yo'q - butunlay tezlikka bog'liq: stall tezlikdan tez bo'lsa o'zi ko'tariladi, sekin bo'lsa pasayadi/qo'nadi.
+    const lift = clamp(Math.abs(vf) / CAR.stall, 0, 1.6);
+    climb = (lift - 1) * CAR.climb;
+    minY = ground;                                                 // qo'nish uchun pastki chegara yo'q
+  } else {
+    if (input.up) climb += CAR.climb;                              // kollektiv: to'g'ridan-to'g'ri ko'tarilish
+    if (input.down) climb -= CAR.climb;
+    if (input.gas) climb += CAR.climb * 0.35;
+    minY = ground + 1.4;                                           // vertolyot doim havoda osilib turadi
+  }
+  car.y += climb * dt;
+  car.y = clamp(car.y, minY, CAR.maxAlt);
+  car.vy = 0;
+}
+
+function stepVehicle(dt) {
+  if (CAR.flying) stepFly(dt); else stepCar(dt);
+}
+
+// Mashina/vertolyot/samolyot ovozlarini almashtiradi - faqat ulov turi o'zgarganda eskisini o'chirib, yangisini yoqadi.
+let lastAudioMode = null;
+function updateVehicleAudio(vf) {
+  if (vehicleMode !== lastAudioMode) {
+    if (lastAudioMode === 'car') setCarAudioActive(false);
+    else if (lastAudioMode === 'heli' || lastAudioMode === 'plane') stopAirportAudio();
+    if (vehicleMode === 'car') setCarAudioActive(true);
+    lastAudioMode = vehicleMode;
+  }
+  if (vehicleMode === 'car') {
+    updateCarAudio(Math.abs(vf), CAR.maxSpeed, input.gas, (input.brake && vf > 0.5) || input.hand);
+  } else if (vehicleMode === 'heli') {
+    const climb = (input.up ? 1 : 0) - (input.down ? 1 : 0);
+    updateHeliAudio(Math.abs(vf), CAR.maxSpeed, input.gas, climb);
+  } else if (vehicleMode === 'plane') {
+    updatePlaneAudio(Math.abs(vf), CAR.maxSpeed, input.gas, input.brake);
+  }
+}
+
 function resolveCollisions() {
   for (let pass = 0; pass < 2; pass++) {
     const fx = Math.sin(car.h), fz = Math.cos(car.h);
@@ -463,7 +732,7 @@ function lerpAngle(a, b, t) {
 const desiredCam = new THREE.Vector3();
 let camBaseY = 0;
 function placeCamera(snap, dt = 0.016) {
-  const p = carProfile;
+  const p = currentProfile();
   camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * p.follow * 0.56));
   const speed = Math.hypot(car.vx, car.vz);
   const pose = cameraPose(p, car.x, car.z, camHeading, speed, settings.cameraDistance - 11);
@@ -480,6 +749,7 @@ function bindHold(el, key) {
   const down = (e) => {
     e.preventDefault();
     unlockCarAudio();   // ovoz faqat foydalanuvchi teginganidan keyin ishga tushadi (brauzer talabi)
+    unlockAirportAudio();
     input[key] = true;
     el.classList.add('is-down');
     try { el.setPointerCapture(e.pointerId); } catch { }
@@ -496,12 +766,15 @@ document.querySelectorAll('.ctl').forEach((el) => bindHold(el, el.dataset.key));
 const KEYMAP = {
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'hand',
+  KeyE: 'up', KeyQ: 'down',
 };
 addEventListener('keydown', (e) => {
   unlockCarAudio();
+  unlockAirportAudio();
   if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
   else if (e.code === 'KeyL') toggleLights();
+  else if (e.code === 'KeyV') setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
   else if (e.code === 'Escape') setPaused(!paused);
 });
 addEventListener('keyup', (e) => { if (KEYMAP[e.code]) input[KEYMAP[e.code]] = false; });
@@ -511,7 +784,7 @@ let paused = false;
 function setPaused(value) {
   paused = value;
   $('pause').hidden = !value;
-  if (value) { for (const k of Object.keys(input)) input[k] = false; updateCarAudio(0, CAR.maxSpeed, false, false); }
+  if (value) { for (const k of Object.keys(input)) input[k] = false; updateCarAudio(0, CAR.maxSpeed, false, false); stopAirportAudio(); }
   document.querySelectorAll('.ctl.is-down').forEach((el) => el.classList.remove('is-down'));
 }
 $('pauseBtn').addEventListener('click', () => setPaused(true));
@@ -763,7 +1036,7 @@ function frame(now) {
 
   if (!paused) {
     const steps = Math.max(1, Math.ceil(dt / (1 / 60)));
-    for (let i = 0; i < steps; i++) stepCar(dt / steps);
+    for (let i = 0; i < steps; i++) stepVehicle(dt / steps);
 
     const speed = Math.hypot(car.vx, car.vz);
     const vf = car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h);
@@ -773,7 +1046,7 @@ function frame(now) {
     const acc = (vf - prevVf) / Math.max(dt, 0.001);
     prevVf = vf;
     const ease = Math.min(1, dt * 6);
-    const tiltK = carProfile.tilt;
+    const tiltK = currentProfile().tilt;
     tiltPitch += (clamp(-acc * 0.0035, -0.05, 0.05) * tiltK - tiltPitch) * ease;
     tiltRoll += (clamp(-car.steer * clamp(Math.abs(vf) / 20, 0, 1) * 0.05, -0.05, 0.05) * tiltK - tiltRoll) * ease;
     const slopePitch = ramps.length ? -Math.atan(surfaceSlope(Math.sin(car.h), Math.cos(car.h))) : 0;
@@ -782,15 +1055,17 @@ function frame(now) {
 
     for (const w of carModel.wheels) w.rotation.x += (vf * dt) / 0.38;
     for (const p of carModel.frontPivots) p.rotation.y = -car.steer * 0.5;
+    const spinParts = VEHICLE_SPIN[vehicleMode];
+    if (spinParts) { const rate = (10 + Math.abs(vf) * 2) * dt; for (const s of spinParts) s.rotation.y += rate; }
 
-    if (carLights) {
+    if (carLights && vehicleMode === 'car') {
       carLights.update({
         brake: (input.brake && vf > 0.5) || input.hand,
         reverse: vf < -0.3 || (input.brake && vf <= 0.5),
         button: lightsOn,
       });
     }
-    updateCarAudio(Math.abs(vf), CAR.maxSpeed, input.gas, (input.brake && vf > 0.5) || input.hand);
+    updateVehicleAudio(vf);
 
     placeCamera(false, dt);
     sun.position.set(car.x + 40, 70, car.z + 25);
@@ -816,6 +1091,10 @@ function frame(now) {
 async function start() {
   const loadingText = $('loadingText'), bar = $('loadingBar');
   await setupCar(
+    (text) => { loadingText.textContent = text; },
+    (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
+  );
+  await setupAirport(
     (text) => { loadingText.textContent = text; },
     (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
   );

@@ -1,0 +1,7 @@
+name: Airplane
+airplane: airport_airplane_2.glb
+length: 13
+rotate: 180
+
+name: Vertolyot
+helicopter: vertolyot.glb

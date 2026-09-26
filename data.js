@@ -21,8 +21,10 @@ export const KEYS = {
   settings: 'dexo-gta:settings',
   zone: 'dexo-gta:zone',        // faqat egasining editoridagi qoralama
   car: 'dexo-gta:car',          // tanlangan mashina nomi
+  airport: 'dexo-gta:airport',  // tanlangan samolyot/vertolyot nomi
   github: 'dexo-gta:github',    // faqat egasining qurilmasida (editor)
   carDraft: 'dexo-gta:cardraft:', // mashina sozlamalari qoralamasi (faqat egasi, oxiriga mashina nomi qo'shiladi)
+  airportDraft: 'dexo-gta:airportdraft:', // samolyot/vertolyot sozlamalari qoralamasi (oxiriga nomi qo'shiladi)
 };
 
 export const DEFAULT_SETTINGS = {
@@ -174,6 +176,82 @@ export async function fetchCarList() {
     if (!res.ok) return [];
     return parseCarList(await res.text());
   } catch { return []; }
+}
+
+// ---------- Samolyot/vertolyot: airport.txt ----------
+// Format car.txt bilan bir xil: "car:" o'rniga "airplane:" yoki "helicopter:" ishlatiladi - shu kalit
+// turini ham (kind), ham GLB fayl nomini (file) belgilaydi. Kamera/o'lcham maydonlari CAR_DEFAULTS bilan
+// bir xil (carx, carz, camdist, camheight, aimy, fov, fovspeed, follow, tilt, length, rotate, lift) -
+// shuning uchun cameraPose() va fitCarModel() o'zgarishsiz ishlaydi.
+export const AIRPORT_KINDS = { airplane: 'Samolyot', helicopter: 'Vertolyot' };
+export const AIRPORT_DEFAULTS = {
+  ...CAR_DEFAULTS,
+  length: 10,
+  camdist: 16,
+  camheight: 6.5,
+  aimy: 2.4,
+  fov: 62,
+  follow: 12,
+};
+const AIRPORT_KEYS = Object.keys(AIRPORT_DEFAULTS);
+
+export function parseAirportList(text) {
+  const list = [];
+  let cur = null;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^([A-Za-z_]+)\s*:\s*(.+)$/);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const val = m[2].trim();
+    if (key === 'name') { cur = { name: val, file: '', kind: '', ...AIRPORT_DEFAULTS }; list.push(cur); }
+    else if (!cur) continue;
+    else if (key === 'airplane') { cur.file = val; cur.kind = 'airplane'; }
+    else if (key === 'helicopter') { cur.file = val; cur.kind = 'helicopter'; }
+    else if (AIRPORT_KEYS.includes(key)) {
+      const n = Number(val);
+      cur[key] = Number.isFinite(n) && (key !== 'length' || n > 0) ? n : AIRPORT_DEFAULTS[key];
+    }
+  }
+  return list.filter((a) => a.name && a.file && a.kind);
+}
+export function serializeAirportList(list) {
+  return list.map((a) => {
+    const lines = [`name: ${a.name}`, `${a.kind}: ${a.file}`];
+    for (const key of AIRPORT_KEYS) {
+      const v = Number(a[key]);
+      if (Number.isFinite(v) && Math.abs(v - AIRPORT_DEFAULTS[key]) > 1e-9) lines.push(`${key}: ${Math.round(v * 1000) / 1000}`);
+    }
+    return lines.join('\n');
+  }).join('\n\n') + '\n';
+}
+export async function fetchAirportList() {
+  try {
+    const res = await fetch('airport.txt', { cache: 'no-store' });
+    if (!res.ok) return [];
+    return parseAirportList(await res.text());
+  } catch { return []; }
+}
+
+export function loadAirportDraft(name) {
+  try {
+    const d = JSON.parse(localStorage.getItem(KEYS.airportDraft + name));
+    if (!d || typeof d !== 'object') return {};
+    const out = {};
+    for (const key of AIRPORT_KEYS) if (Number.isFinite(Number(d[key]))) out[key] = Number(d[key]);
+    return out;
+  } catch { return {}; }
+}
+export function saveAirportDraft(name, profile) {
+  try { localStorage.setItem(KEYS.airportDraft + name, JSON.stringify(profile)); return true; } catch { return false; }
+}
+
+export function loadSelectedAirportName() {
+  try { return localStorage.getItem(KEYS.airport) || ''; } catch { return ''; }
+}
+export function saveSelectedAirportName(name) {
+  try { localStorage.setItem(KEYS.airport, name); return true; } catch { return false; }
 }
 
 export function cameraPose(p, carX, carZ, heading, speed, distOffset = 0) {
