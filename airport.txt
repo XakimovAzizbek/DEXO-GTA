@@ -1,6 +1,6 @@
 name: Airplane
 airplane: airport_airplane_2.glb
-length: 13
+length: 27
 rotate: 180
 
 name: Helicopter
