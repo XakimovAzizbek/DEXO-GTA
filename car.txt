@@ -1,3 +1,14 @@
+name: LACETTI
+car: lacetti.glb
+length: 7
+carz: -6
+camdist: 9.5
+camheight: 3.9
+aimy: 3.5
+fov: 61
+fovspeed: 0.05
+follow: 20
+
 name: KIA K5
 car: kia_k5.glb
 length: 5.6
@@ -105,6 +116,7 @@ camheight: 4.8
 aimy: 3
 fov: 65
 fovspeed: 0.05
+follow: 20
 light: shape=round func=brake color=#ff2a2a x=0.86 y=1.28 z=-2.2 size=0.75 mirror=1
 light: shape=square func=reverse color=#ffffff x=0.84 y=1.08 z=-2.22 size=0.75 mirror=1
-light: shape=round func=button color=#ffffff x=1.04 y=0.96 z=2.2 size=1 mirror=1
+light: shape=round func=button color=#ffffff x=0.84 y=0.96 z=2.2 size=1 mirror=1
