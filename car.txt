@@ -1,5 +1,5 @@
 name: LACETTI
-car: lacetti.glb
+car: lacetti-v1.glb
 length: 7
 carz: -6
 camdist: 9.5
