@@ -5,3 +5,4 @@ rotate: 180
 
 name: Helicopter
 helicopter: helicopter.glb
+length: 13.5
