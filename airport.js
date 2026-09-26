@@ -62,8 +62,10 @@ function resize() {
 }
 addEventListener('resize', resize);
 resize();
+let spinNodes = [];
 renderer.setAnimationLoop(() => {
   controls.update();
+  for (const o of spinNodes) o.rotation.y += 0.28;   // parrak/rotor - doim sekin aylanib tursin (ko'rish uchun)
   renderer.render(scene, camera);
 });
 
@@ -94,7 +96,7 @@ async function show(item) {
   shown = item;
   pickBtn.disabled = true;
   stateEl.textContent = '';
-  if (current) { stage.remove(current); disposeModel(current); current = null; }
+  if (current) { stage.remove(current); disposeModel(current); current = null; spinNodes = []; }
   refreshUI();
 
   loading.hidden = false;
@@ -104,6 +106,8 @@ async function show(item) {
     if (mine !== token) { disposeModel(model); return; }
     stage.add(model);
     current = model;
+    spinNodes = [];
+    model.traverse((o) => { if (/rotor|propellar|propeller|\bblade\b|\bprop\b/i.test(o.name || '')) spinNodes.push(o); });
     pickBtn.disabled = false;
     stateEl.textContent = item.name === savedNow ? 'Hozir tanlangan' : '';
   } catch (err) {

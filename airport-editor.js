@@ -48,8 +48,10 @@ function resize() {
 }
 addEventListener('resize', resize);
 
+let spinNodes = [];
 renderer.setAnimationLoop(() => {
   controls.update();
+  for (const o of spinNodes) o.rotation.y += 0.28;   // parrak/rotor - ko'rish uchun sekin aylanadi
   renderer.render(scene, camera);
 });
 
@@ -96,6 +98,8 @@ async function selectEntry(item) {
   status.textContent = `${item.name} yuklanmoqda…`;
   try {
     rawScene = await loadAirportScene(profile, () => {});
+    spinNodes = [];
+    rawScene.traverse((o) => { if (/rotor|propellar|propeller|\bblade\b|\bprop\b/i.test(o.name || '')) spinNodes.push(o); });
     rebuildPreview();
     tools.hidden = false;
     status.textContent = '';

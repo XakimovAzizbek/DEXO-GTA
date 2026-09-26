@@ -415,7 +415,7 @@ document.body.appendChild(vehicleBtn);
 
 const flightPad = document.createElement('div');
 Object.assign(flightPad.style, {
-  position: 'fixed', right: '14px', bottom: '230px', zIndex: 30, display: 'none',   // pad--right (gaz/tormoz/qo'l tormozi) balandligidan yuqorida - ustma-ust tushmasin
+  position: 'fixed', right: '14px', bottom: '110px', zIndex: 30, display: 'none',
   flexDirection: 'column', gap: '10px',
 });
 function makeFlightBtn(label, key) {
@@ -444,7 +444,7 @@ function setVehicle(mode) {
   Object.assign(CAR, VEHICLE_TYPES[mode]);
   for (const k of VEHICLE_ORDER) VEHICLE_GROUPS[k].visible = k === mode;
   vehicleBtn.textContent = `${VEHICLE_ICON[mode]} ${VEHICLE_LABEL[mode]}`;
-  flightPad.style.display = mode === 'heli' ? 'flex' : 'none';   // vertolyotda kollektiv (▲▼) kerak, samolyotda esa balandlik avtomatik (tezlikka bog'liq)
+  flightPad.style.display = CAR.flying ? 'flex' : 'none';
   car.vx = 0; car.vz = 0; car.vy = 0; car.steer = 0;
   if (CAR.flying && !wasFlying) {
     car.y = Math.max(car.y, (ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0) + 6);
@@ -511,6 +511,13 @@ async function setupAirport(setText, setProgress) {
       model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
       group.add(model);
       fallback.group.visible = false;   // GLB muvaffaqiyatli - kod bilan yasalgan zaxira modelni yashiramiz
+
+      // Nomi bo'yicha parrak/rotor qismlarini topib, mavjud aylantirish tizimiga ulaymiz (pastdagi VEHICLE_SPIN).
+      const spinNodes = [];
+      model.traverse((o) => {
+        if (/rotor|propellar|propeller|\bblade\b|\bprop\b/i.test(o.name || '')) spinNodes.push(o);
+      });
+      if (spinNodes.length) VEHICLE_SPIN[mode] = spinNodes;
     } catch (err) {
       console.warn(`${VEHICLE_LABEL[mode]} modeli yuklanmadi:`, err);
     }
@@ -649,9 +656,10 @@ function stepFly(dt) {
   const ground = ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0;
   let climb = 0, minY;
   if (vehicleMode === 'plane') {
-    // Tugma yo'q - butunlay tezlikka bog'liq: stall tezlikdan tez bo'lsa o'zi ko'tariladi, sekin bo'lsa pasayadi/qo'nadi.
-    const lift = clamp(Math.abs(vf) / CAR.stall, 0, 1.6);
-    climb = (lift - 1) * CAR.climb;
+    const lift = clamp(Math.abs(vf) / CAR.stall, 0, 1.3);         // stall tezligidan past bo'lsa ko'tarolmaydi
+    if (input.up) climb += CAR.climb * lift;
+    if (input.down) climb -= CAR.climb;
+    if (lift < 1) climb -= (1 - lift) * 6;                        // real stall: tezlik yetmasa avtomatik pasayadi
     minY = ground;                                                 // qo'nish uchun pastki chegara yo'q
   } else {
     if (input.up) climb += CAR.climb;                              // kollektiv: to'g'ridan-to'g'ri ko'tarilish
