@@ -738,11 +738,17 @@ function lerpAngle(a, b, t) {
 }
 const desiredCam = new THREE.Vector3();
 let camBaseY = 0;
+// Kamerani barmoq bilan aylantirish uchun (pastda to'liq tavsif bilan): placeCamera shundan foydalanadi.
+let orbitYaw = 0, orbitDragging = false;
 function placeCamera(snap, dt = 0.016) {
   const p = currentProfile();
   camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * p.follow * 0.56));
   const speed = Math.hypot(car.vx, car.vz);
-  const pose = cameraPose(p, car.x, car.z, camHeading, speed, settings.cameraDistance - 11);
+  if (!orbitDragging) {                                   // tez yursa tezroq, to'xtasa sekin - asl holatga qaytadi
+    const decay = clamp(speed / 4, 0, 1);
+    orbitYaw *= Math.exp(-dt * (0.3 + decay * 3));
+  }
+  const pose = cameraPose(p, car.x, car.z, camHeading + orbitYaw, speed, settings.cameraDistance - 11);
   camBaseY = snap ? car.y : camBaseY + (car.y - camBaseY) * (1 - Math.exp(-dt * 6));
   desiredCam.set(pose.px, pose.py + camBaseY, pose.pz);
   if (snap) camera.position.copy(desiredCam);
@@ -750,6 +756,43 @@ function placeCamera(snap, dt = 0.016) {
   camera.lookAt(pose.lx, pose.ly + camBaseY, pose.lz);
   if (Math.abs(camera.fov - pose.fov) > 0.05) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
 }
+
+// ---------- Kamerani barmoq bilan aylantirish (ekranning yotiq holatdagi YUQORI yarmida) ----------
+// Bir barmoq bilan tortib mashinani istalgan tomondan ko'rish mumkin. Tez yursa, kamera o'zi
+// avvalgi (orqadan kuzatuvchi) holatga qaytadi - shu bilan haydash chalkashib qolmaydi.
+let orbitPointerId = null, orbitStartX = 0, orbitStartY = 0, orbitStartYaw = 0;
+const ORBIT_SENS = 0.006;   // piksel boshiga radian
+
+// Ekranning haqiqiy (portret) koordinatasidagi nuqta, yotiq burilish hisobga olingan holda,
+// "yotiq ko'rinishning" yuqori yarmida turibdimi - shuni aytadi.
+function inOrbitZone(clientX, clientY) {
+  if (!rotated) return clientY < innerHeight / 2;
+  return settings.landscapeSide === 'ccw' ? clientX < innerWidth / 2 : clientX > innerWidth / 2;
+}
+// Barmoq surilishini "yotiq ko'rinish"dagi gorizontal (chapga/o'ngga) o'zgarishga aylantiradi.
+function orbitAxisDelta(dx, dy) {
+  if (!rotated) return dx;
+  return settings.landscapeSide === 'ccw' ? -dy : dy;
+}
+canvas.addEventListener('pointerdown', (e) => {
+  if (orbitDragging || !inOrbitZone(e.clientX, e.clientY)) return;
+  orbitDragging = true;
+  orbitPointerId = e.pointerId;
+  orbitStartX = e.clientX; orbitStartY = e.clientY; orbitStartYaw = orbitYaw;
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* ba'zi brauzerlarda kerak emas */ }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!orbitDragging || e.pointerId !== orbitPointerId) return;
+  const d = orbitAxisDelta(e.clientX - orbitStartX, e.clientY - orbitStartY);
+  orbitYaw = orbitStartYaw - d * ORBIT_SENS;
+});
+function endOrbitDrag(e) {
+  if (e.pointerId !== orbitPointerId) return;
+  orbitDragging = false;
+  orbitPointerId = null;
+}
+canvas.addEventListener('pointerup', endOrbitDrag);
+canvas.addEventListener('pointercancel', endOrbitDrag);
 
 // ---------- Boshqaruv ----------
 function bindHold(el, key) {

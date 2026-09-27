@@ -1,3 +1,14 @@
+name: mercedes-benz g class amg g 63
+car: 2020_mercedes-benz_g-class_amg_g_63.glb
+length: 7
+camdist: 8
+camheight: 3.8
+aimy: 3.5
+fov: 66
+fovspeed: 0.05
+follow: 20
+light: shape=long func=brake color=#ff2a2a x=0.64 y=0.7 z=-1.96 size=0.45 mirror=1
+
 name: LACETTI
 car: lacetti-v1.glb
 length: 7
