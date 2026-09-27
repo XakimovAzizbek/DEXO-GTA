@@ -36,11 +36,38 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
   pointer-events: none;
 }
 
-/* Chiroq tugmasi (faqat mashinada "tugma bilan yoqiladigan" chiroq bo'lsa ko'rinadi) */
-.light-btn { left: 50%; transform: translateX(-50%); width: auto; min-width: 52px; padding: 0 14px; gap: 8px; }
-.light-btn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.light-label { font-style: normal; font-weight: 600; font-size: 15px; }
-.light-btn.is-on { background: var(--hazard); border-color: var(--hazard); color: #14171d; }
+/* Chiroq va signal tugmalari: gaz tugmasi ustida, ikkalasi ham faqat iconka, o'ziga xos dizaynda */
+.aux-btn {
+  align-self: flex-end;
+  width: 60px; height: 60px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: rgba(27, 31, 39, 0.66);
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+}
+.aux-btn svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Chiroq: doira ichida, yoqilganda yorug' sariq halqa bilan porlaydi */
+.aux-btn--light {
+  border: 3px solid var(--paint);
+  color: var(--paint);
+  box-shadow: 0 0 0 0 rgba(255, 201, 51, 0);
+  transition: box-shadow 160ms ease, background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.aux-btn--light.is-on {
+  background: var(--hazard); border-color: var(--hazard); color: #14171d;
+  box-shadow: 0 0 16px 2px rgba(255, 201, 51, 0.65);
+}
+
+/* Signal: qizg'ish (siren) rangda, bosilganda to'liq yonadi */
+.aux-btn--horn {
+  border: 3px solid var(--siren);
+  color: var(--siren);
+}
+.aux-btn--horn.is-down {
+  background: var(--siren); border-color: var(--siren); color: #fff;
+}
 
 /* Radar */
 .minimap {
@@ -104,6 +131,8 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 .compact .ctl { width: 78px; height: 78px; }
 .compact .ctl--gas, .compact .ctl--brake { width: 100px; height: 60px; }
 .compact .ctl--hand { width: 72px; height: 72px; }
+.compact .aux-btn { width: 50px; height: 50px; }
+.compact .aux-btn svg { width: 22px; height: 22px; }
 .compact .minimap { width: 104px; height: 104px; }
 .compact .speed-value { font-size: 34px; }
 
@@ -149,6 +178,8 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
   body:not(.is-rotated) .pad--right { flex-direction: column; align-items: flex-end; }
   body:not(.is-rotated) .ctl--gas, body:not(.is-rotated) .ctl--brake { width: 104px; height: 64px; }
   body:not(.is-rotated) .ctl--hand { width: 104px; height: 56px; font-size: 13px; }
+  body:not(.is-rotated) .aux-btn { width: 50px; height: 50px; }
+  body:not(.is-rotated) .aux-btn svg { width: 22px; height: 22px; }
   body:not(.is-rotated) .speed {
     left: max(12px, env(safe-area-inset-left));
     bottom: auto;

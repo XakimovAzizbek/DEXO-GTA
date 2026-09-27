@@ -14,7 +14,7 @@ import {
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
-import { unlockCarAudio, updateCarAudio, setCarAudioActive } from './carAudio.js';
+import { unlockCarAudio, updateCarAudio, setCarAudioActive, updateHorn } from './carAudio.js';
 import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
 
 
@@ -402,17 +402,7 @@ function useFallbackCar() {
   carModel = built;
 }
 
-// ---------- Ulovni almashtirish tugmasi va tepa/pastga tugmalari (kod bilan yaratiladi) ----------
-const vehicleBtn = document.createElement('button');
-vehicleBtn.type = 'button';
-vehicleBtn.textContent = `🚗 ${VEHICLE_LABEL.car}`;
-Object.assign(vehicleBtn.style, {
-  position: 'fixed', top: '12px', left: '50%', transform: 'translateX(-50%)', zIndex: 30,
-  padding: '8px 16px', borderRadius: '999px', border: '1px solid rgba(255,255,255,.35)',
-  background: 'rgba(20,22,28,.72)', color: '#fff', font: '600 14px/1.2 system-ui, sans-serif', cursor: 'pointer',
-});
-document.body.appendChild(vehicleBtn);
-
+// ---------- Tepa/pastga (uchish) tugmalari (kod bilan yaratiladi) ----------
 const flightPad = document.createElement('div');
 Object.assign(flightPad.style, {
   position: 'fixed', right: '14px', bottom: '110px', zIndex: 30, display: 'none',
@@ -443,7 +433,6 @@ function setVehicle(mode) {
   vehicleMode = mode;
   Object.assign(CAR, VEHICLE_TYPES[mode]);
   for (const k of VEHICLE_ORDER) VEHICLE_GROUPS[k].visible = k === mode;
-  vehicleBtn.textContent = `${VEHICLE_ICON[mode]} ${VEHICLE_LABEL[mode]}`;
   flightPad.style.display = vehicleMode === 'heli' ? 'flex' : 'none';   // faqat vertolyotda: samolyot balandligi tezlikdan o'zi hisoblanadi
   car.vx = 0; car.vz = 0; car.vy = 0; car.steer = 0;
   if (CAR.flying && !wasFlying) {
@@ -452,11 +441,6 @@ function setVehicle(mode) {
     car.y = ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0;
   }
 }
-vehicleBtn.addEventListener('click', () => {
-  unlockCarAudio();
-  unlockAirportAudio();
-  setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
-});
 
 async function setupCar(setText, setProgress) {
   const cars = await fetchCarList();
@@ -541,7 +525,7 @@ function respawn() {
   placeCamera(true);
 }
 
-const input = { left: false, right: false, gas: false, brake: false, hand: false, up: false, down: false };
+const input = { left: false, right: false, gas: false, brake: false, hand: false, up: false, down: false, horn: false };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function surfaceSlope(fx, fz) {
@@ -686,6 +670,7 @@ function updateVehicleAudio(vf) {
   }
   if (vehicleMode === 'car') {
     updateCarAudio(Math.abs(vf), CAR.maxSpeed, input.gas, (input.brake && vf > 0.5) || input.hand);
+    updateHorn(input.horn);
   } else if (vehicleMode === 'heli') {
     const climb = (input.up ? 1 : 0) - (input.down ? 1 : 0);
     updateHeliAudio(Math.abs(vf), CAR.maxSpeed, input.gas, climb);
@@ -740,6 +725,9 @@ const desiredCam = new THREE.Vector3();
 let camBaseY = 0;
 // Kamerani barmoq bilan aylantirish uchun (pastda to'liq tavsif bilan): placeCamera shundan foydalanadi.
 let orbitYaw = 0, orbitDragging = false;
+// Ikki barmoqli: pinch = yaqin/uzoq (doim eslab qoladi), ikkalasini birga tepaga/pastga tortish =
+// vaqtinchalik "yuqoridan qarash" (barmoqni qo'yib yuborsa asl holiga qaytadi).
+let zoomOffset = 0, camLift = 0;
 function placeCamera(snap, dt = 0.016) {
   const p = currentProfile();
   camHeading = snap ? car.h : lerpAngle(camHeading, car.h, 1 - Math.exp(-dt * p.follow * 0.56));
@@ -748,12 +736,14 @@ function placeCamera(snap, dt = 0.016) {
     const decay = clamp(speed / 4, 0, 1);
     orbitYaw *= Math.exp(-dt * (0.3 + decay * 3));
   }
-  const pose = cameraPose(p, car.x, car.z, camHeading + orbitYaw, speed, settings.cameraDistance - 11);
+  if (pinchPointers.size < 2) camLift *= Math.exp(-dt * 2.2);   // barmoqlar qo'yib yuborilgach asta pasayadi
+  const pose = cameraPose(p, car.x, car.z, camHeading + orbitYaw, speed, settings.cameraDistance - 11 + zoomOffset);
   camBaseY = snap ? car.y : camBaseY + (car.y - camBaseY) * (1 - Math.exp(-dt * 6));
-  desiredCam.set(pose.px, pose.py + camBaseY, pose.pz);
+  const lift = camLift * 6.5;   // "tepadan qarash" balandligi (metr)
+  desiredCam.set(pose.px, pose.py + camBaseY + lift, pose.pz);
   if (snap) camera.position.copy(desiredCam);
   else camera.position.lerp(desiredCam, 1 - Math.exp(-dt * p.follow));
-  camera.lookAt(pose.lx, pose.ly + camBaseY, pose.lz);
+  camera.lookAt(pose.lx, pose.ly + camBaseY - camLift * 1.6, pose.lz);
   if (Math.abs(camera.fov - pose.fov) > 0.05) { camera.fov = pose.fov; camera.updateProjectionMatrix(); }
 }
 
@@ -794,6 +784,42 @@ function endOrbitDrag(e) {
 canvas.addEventListener('pointerup', endOrbitDrag);
 canvas.addEventListener('pointercancel', endOrbitDrag);
 
+// ---------- Kamera: ikki barmoqli undirish (pinch = yaqin/uzoq, birga tortish = tepadan qarash) ----------
+// Ikkita barmoq (chapdan biri, o'ngdan biri) bir-biridan uzoqlashsa - kamera uzoqlashadi (uzoqroqdan ko'radi);
+// bir-biriga yaqinlashsa - kamera yaqinlashadi. Ikkalasini birga tepaga tortsa - kamera vaqtincha ko'tarilib,
+// yuqoridan qaraydi; qo'yib yuborilsa asl holatiga qaytadi.
+const pinchPointers = new Map();     // pointerId -> {x, y}
+let pinchStartDist = 0, pinchBaseZoom = 0;
+let pinchStartAvgY = 0, pinchBaseLift = 0;
+const ZOOM_MIN = -6, ZOOM_MAX = 20;
+const ZOOM_SENS = 0.02;              // metr / (barmoqlar orasidagi masofa o'zgarishi, piksel)
+const LIFT_SENS = 0.004;             // 0..1 oralig'i / piksel
+function pinchGeometry() {
+  const [a, b] = [...pinchPointers.values()];
+  return { dist: Math.hypot(a.x - b.x, a.y - b.y), avgY: (a.y + b.y) / 2 };
+}
+canvas.addEventListener('pointerdown', (e) => {
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinchPointers.size === 2) {
+    orbitDragging = false;   // bir barmoqli aylantirish bilan aralashib ketmasin
+    const g = pinchGeometry();
+    pinchStartDist = g.dist; pinchBaseZoom = zoomOffset;
+    pinchStartAvgY = g.avgY; pinchBaseLift = camLift;
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (!pinchPointers.has(e.pointerId)) return;
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinchPointers.size === 2) {
+    const g = pinchGeometry();
+    zoomOffset = clamp(pinchBaseZoom + (g.dist - pinchStartDist) * ZOOM_SENS, ZOOM_MIN, ZOOM_MAX);
+    camLift = clamp(pinchBaseLift + (pinchStartAvgY - g.avgY) * LIFT_SENS, 0, 1);
+  }
+});
+function endPinchPointer(e) { pinchPointers.delete(e.pointerId); }
+canvas.addEventListener('pointerup', endPinchPointer);
+canvas.addEventListener('pointercancel', endPinchPointer);
+
 // ---------- Boshqaruv ----------
 function bindHold(el, key) {
   const down = (e) => {
@@ -816,7 +842,7 @@ document.querySelectorAll('.ctl').forEach((el) => bindHold(el, el.dataset.key));
 const KEYMAP = {
   ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'hand',
-  KeyE: 'up', KeyQ: 'down',
+  KeyE: 'up', KeyQ: 'down', KeyH: 'horn',
 };
 addEventListener('keydown', (e) => {
   unlockCarAudio();
@@ -834,7 +860,7 @@ let paused = false;
 function setPaused(value) {
   paused = value;
   $('pause').hidden = !value;
-  if (value) { for (const k of Object.keys(input)) input[k] = false; updateCarAudio(0, CAR.maxSpeed, false, false); stopAirportAudio(); }
+  if (value) { for (const k of Object.keys(input)) input[k] = false; updateCarAudio(0, CAR.maxSpeed, false, false); updateHorn(false); stopAirportAudio(); }
   document.querySelectorAll('.ctl.is-down').forEach((el) => el.classList.remove('is-down'));
 }
 $('pauseBtn').addEventListener('click', () => setPaused(true));

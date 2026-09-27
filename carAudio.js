@@ -52,7 +52,27 @@ function build(ac) {
   noiseSrc.connect(brakeFilter).connect(brakeGain).connect(master);
   noiseSrc.start();
 
-  return { master, engineGain, engineFilter, osc1, osc2, brakeGain, brakeFilter };
+  // ---- Signal (horn): ikkita "kvadrat" ton, klassik ikki tovushli mashina signaliga o'xshash ----
+  const hornGain = ac.createGain();
+  hornGain.gain.value = 0;
+  const hornFilter = ac.createBiquadFilter();
+  hornFilter.type = 'lowpass';
+  hornFilter.frequency.value = 2200;
+  const hOsc1 = ac.createOscillator();
+  hOsc1.type = 'square';
+  hOsc1.frequency.value = 415;
+  const hOsc2 = ac.createOscillator();
+  hOsc2.type = 'square';
+  hOsc2.frequency.value = 523;
+  const hOsc2Gain = ac.createGain();
+  hOsc2Gain.gain.value = 0.55;
+  hOsc1.connect(hornFilter);
+  hOsc2.connect(hOsc2Gain).connect(hornFilter);
+  hornFilter.connect(hornGain).connect(master);
+  hOsc1.start();
+  hOsc2.start();
+
+  return { master, engineGain, engineFilter, osc1, osc2, brakeGain, brakeFilter, hornGain };
 }
 
 // Brauzerlar ovozni faqat foydalanuvchi bosgandan keyin ruxsat beradi — shu uchun bu funksiya
@@ -94,4 +114,12 @@ export function updateCarAudio(speed, maxSpeed, gas, brake) {
   const brakeVol = braking ? Math.min(0.5, 0.1 + ratio * 0.45) : 0;
   nodes.brakeGain.gain.setTargetAtTime(brakeVol, t, braking ? 0.04 : 0.3);
   nodes.brakeFilter.frequency.setTargetAtTime(1600 + ratio * 1400, t, 0.15);
+}
+
+// Signal (klakson) tugmasi bosib turilganda chaqiriladi; qo'yib yuborilsa false yuboriladi.
+export function updateHorn(pressed) {
+  if (!ctx || !nodes) return;
+  if (ctx.state === 'suspended') ctx.resume();
+  const t = ctx.currentTime;
+  nodes.hornGain.gain.setTargetAtTime(pressed ? 0.4 : 0, t, pressed ? 0.015 : 0.09);
 }
