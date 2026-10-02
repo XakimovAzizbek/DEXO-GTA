@@ -455,9 +455,10 @@ async function setupCar(setText, setProgress) {
     lightBtn.classList.toggle('is-on', lightsOn);
     setText(`Mashina yuklanmoqda: ${entry.name}…`);
     try {
-      const model = await loadCarModel(entry, setProgress);
-      model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
-      carGroup.add(model);
+      const built = await loadCarModel(entry, setProgress);
+      built.group.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
+      carGroup.add(built.group);
+      carModel = built;
       return;
     } catch (err) {
       console.warn('Mashina modeli yuklanmadi:', err);
