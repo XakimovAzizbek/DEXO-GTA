@@ -526,7 +526,7 @@ function respawn() {
   placeCamera(true);
 }
 
-const input = { left: false, right: false, gas: false, brake: false, hand: false, up: false, down: false, horn: false };
+const input = { steerAxis: 0, gas: false, brake: false, hand: false, up: false, down: false, horn: false };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function surfaceSlope(fx, fz) {
@@ -577,7 +577,7 @@ function stepCar(dt) {
 
   vr *= Math.exp(-(input.hand ? 1.6 : 9) * dt);
 
-  const target = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const target = input.steerAxis;
   car.steer += (target - car.steer) * Math.min(1, dt * 7);
   const speedFactor = clamp(Math.abs(vf) / 5, 0, 1);
   const highSpeed = 1 - 0.55 * clamp(Math.abs(vf) / CAR.maxSpeed, 0, 1);
@@ -620,7 +620,7 @@ function stepFly(dt) {
 
   vr *= Math.exp(-6 * dt);
 
-  const target = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const target = input.steerAxis;
   car.steer += (target - car.steer) * Math.min(1, dt * 4);
   // Vertolyot dumaloq rotor tufayli joyida ham to'liq buriladi; samolyotga qanotdan foyda olish uchun tezlik kerak.
   const speedFactor = vehicleMode === 'heli' ? 1 : clamp(Math.abs(vf) / Math.max(1, CAR.stall), 0.15, 1);
@@ -840,28 +840,90 @@ function bindHold(el, key) {
 }
 document.querySelectorAll('.ctl').forEach((el) => bindHold(el, el.dataset.key));
 
+// ---------- Dumaloq rul: ozgina burasan - ozgina buriladi (haqiqiy mashinadagi kabi, chap/o'ng tugma emas) ----------
+const wheel = $('wheel');
+const wheelRim = $('wheelRim');
+const WHEEL_MAX_DEG = 90;   // shuncha gradusga burasan - g'ildirak to'liq buriladi (steerAxis = ±1)
+let wheelDragging = false, wheelRotation = 0, wheelStartAngle = 0, wheelStartRotation = 0;
+let keyLeft = false, keyRight = false;   // klaviatura (A/D, ←/→) ham rulni aylantiradi
+
+function wheelAngleFromEvent(ev, rect) {
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  return Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI;
+}
+wheel.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  unlockCarAudio();
+  unlockAirportAudio();
+  wheelDragging = true;
+  wheel.classList.add('is-down');
+  try { wheel.setPointerCapture(e.pointerId); } catch { }
+  const rect = wheel.getBoundingClientRect();
+  wheelStartAngle = wheelAngleFromEvent(e, rect);
+  wheelStartRotation = wheelRotation;
+});
+wheel.addEventListener('pointermove', (e) => {
+  if (!wheelDragging) return;
+  const rect = wheel.getBoundingClientRect();
+  let delta = wheelAngleFromEvent(e, rect) - wheelStartAngle;
+  while (delta > 180) delta -= 360;
+  while (delta < -180) delta += 360;
+  wheelRotation = clamp(wheelStartRotation + delta, -WHEEL_MAX_DEG, WHEEL_MAX_DEG);
+});
+function releaseWheel() { wheelDragging = false; wheel.classList.remove('is-down'); }
+wheel.addEventListener('pointerup', releaseWheel);
+wheel.addEventListener('pointercancel', releaseWheel);
+wheel.addEventListener('lostpointercapture', releaseWheel);
+wheel.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Har freymda chaqiriladi: klaviatura bilan burish va qo'yib yuborilganda o'zi markazga qaytishi uchun.
+function updateWheel(dt) {
+  const keySteer = (keyRight ? 1 : 0) - (keyLeft ? 1 : 0);
+  if (!wheelDragging) {
+    if (keySteer !== 0) wheelRotation = clamp(wheelRotation + keySteer * WHEEL_MAX_DEG * 3.2 * dt, -WHEEL_MAX_DEG, WHEEL_MAX_DEG);
+    else wheelRotation -= wheelRotation * Math.min(1, dt * 8);
+  }
+  wheelRim.style.transform = `rotate(${wheelRotation}deg)`;
+  input.steerAxis = wheelRotation / WHEEL_MAX_DEG;
+}
+
 const KEYMAP = {
-  ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
   ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', Space: 'hand',
   KeyE: 'up', KeyQ: 'down', KeyH: 'horn',
 };
 addEventListener('keydown', (e) => {
   unlockCarAudio();
   unlockAirportAudio();
-  if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') { keyLeft = true; e.preventDefault(); }
+  else if (e.code === 'ArrowRight' || e.code === 'KeyD') { keyRight = true; e.preventDefault(); }
+  else if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
   else if (e.code === 'KeyL') toggleLights();
   else if (e.code === 'KeyV') setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
   else if (e.code === 'Escape') setPaused(!paused);
 });
-addEventListener('keyup', (e) => { if (KEYMAP[e.code]) input[KEYMAP[e.code]] = false; });
+addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') keyLeft = false;
+  else if (e.code === 'ArrowRight' || e.code === 'KeyD') keyRight = false;
+  else if (KEYMAP[e.code]) input[KEYMAP[e.code]] = false;
+});
 
 // ---------- Pauza ----------
 let paused = false;
 function setPaused(value) {
   paused = value;
   $('pause').hidden = !value;
-  if (value) { for (const k of Object.keys(input)) input[k] = false; updateCarAudio(0, CAR.maxSpeed, false, false); updateHorn(false); stopAirportAudio(); }
+  if (value) {
+    for (const k of Object.keys(input)) input[k] = false;
+    input.steerAxis = 0;
+    wheelDragging = false;
+    wheelRotation = 0;
+    wheelRim.style.transform = 'rotate(0deg)';
+    wheel.classList.remove('is-down');
+    updateCarAudio(0, CAR.maxSpeed, false, false);
+    updateHorn(false);
+    stopAirportAudio();
+  }
   document.querySelectorAll('.ctl.is-down').forEach((el) => el.classList.remove('is-down'));
 }
 $('pauseBtn').addEventListener('click', () => setPaused(true));
@@ -1117,6 +1179,7 @@ function frame(now) {
   for (const tl of trafficLightEntries) updateTrafficLightGroup(tl.group, tl.data, now / 1000);
 
   if (!paused) {
+    updateWheel(dt);
     const steps = Math.max(1, Math.ceil(dt / (1 / 60)));
     for (let i = 0; i < steps; i++) stepVehicle(dt / steps);
 
