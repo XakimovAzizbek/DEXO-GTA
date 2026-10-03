@@ -17,13 +17,16 @@
   <link rel="stylesheet" href="common.css">
   <link rel="stylesheet" href="online-game.css">
 </head>
-<body>
-  <main class="wrap">
+<body class="authing">
+  <main class="wrap wrap--zones">
     <div class="badge" aria-hidden="true">🌐</div>
-    <h1>Online tez orada</h1>
-    <p>Online rejim hozir sozlanmoqda: zonalar tayyor bo‘lgach, shu yerdan do‘stlaringiz bilan birga haydaysiz.</p>
+    <h1>Online zonalar</h1>
+    <p>Zonalardan birini tanlang. Har bir zonaga bir vaqtning o‘zida eng ko‘pi bilan 10 kishi kira oladi.</p>
+    <div class="zone-grid" id="zoneGrid"></div>
+    <p class="zone-note" id="zoneNote"></p>
     <a class="btn btn--ghost back" href="index.html">Bosh menyuga qaytish</a>
   </main>
+  <script type="module" src="online-game.js"></script>
   <script>
     if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('service-worker.js'));
   </script>

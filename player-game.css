@@ -1,0 +1,14 @@
+/* player-game.html asosiy ko'rinishi game.css'dan olinadi; bu yerda faqat onlayn-rejimga xos qo'shimchalar */
+.zone-badge {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(15, 90, 75, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font: 700 13px/1.2 'Barlow', system-ui, sans-serif;
+}
