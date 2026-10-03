@@ -9,6 +9,7 @@ const CACHE_NAME = `dexo-gta-${VERSION}`;
 // egasi bo'lgan siz uchun; ular saytda qolaveradi, lekin PWA ilova sifatida o'rnatilmaydi va keshga oldindan yuklanmaydi.
 const APP_SHELL = [
   'index.html', 'index.css', 'index.js',
+  'online-game.html', 'online-game.css',
   'car.html', 'car.css', 'car.js',
   'game.html', 'game.css', 'game.js',
   'settings.html', 'settings.css', 'settings.js',
