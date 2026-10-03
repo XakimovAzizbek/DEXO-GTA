@@ -843,8 +843,8 @@ document.querySelectorAll('.ctl').forEach((el) => bindHold(el, el.dataset.key));
 // ---------- Dumaloq rul: ozgina burasan - ozgina buriladi (haqiqiy mashinadagi kabi, chap/o'ng tugma emas) ----------
 const wheel = $('wheel');
 const wheelRim = $('wheelRim');
-const WHEEL_MAX_DEG = 90;   // shuncha gradusga burasan - g'ildirak to'liq buriladi (steerAxis = ±1)
-let wheelDragging = false, wheelRotation = 0, wheelStartAngle = 0, wheelStartRotation = 0;
+const WHEEL_MAX_DEG = 450;   // haqiqiy ruldagidek ~2.5 marta aylanadi (lock-to-lock) - g'ildirak shunda to'liq buriladi
+let wheelDragging = false, wheelRotation = 0, wheelLastAngle = 0;
 let keyLeft = false, keyRight = false;   // klaviatura (A/D, ←/→) ham rulni aylantiradi
 
 function wheelAngleFromEvent(ev, rect) {
@@ -856,21 +856,23 @@ wheel.addEventListener('pointerdown', (e) => {
   unlockCarAudio();
   unlockAirportAudio();
   wheelDragging = true;
-  wheel.classList.add('is-down');
   try { wheel.setPointerCapture(e.pointerId); } catch { }
   const rect = wheel.getBoundingClientRect();
-  wheelStartAngle = wheelAngleFromEvent(e, rect);
-  wheelStartRotation = wheelRotation;
+  wheelLastAngle = wheelAngleFromEvent(e, rect);
 });
 wheel.addEventListener('pointermove', (e) => {
   if (!wheelDragging) return;
   const rect = wheel.getBoundingClientRect();
-  let delta = wheelAngleFromEvent(e, rect) - wheelStartAngle;
+  const angle = wheelAngleFromEvent(e, rect);
+  // Har harakatda FAQAT oldingi nuqtadan farqni qo'shamiz (boshlang'ich nuqtadan bitta katta farq emas) -
+  // shunda 180°dan ko'proq burasang ham yo'nalish hech qachon teskari tomonga "sakramaydi".
+  let delta = angle - wheelLastAngle;
   while (delta > 180) delta -= 360;
   while (delta < -180) delta += 360;
-  wheelRotation = clamp(wheelStartRotation + delta, -WHEEL_MAX_DEG, WHEEL_MAX_DEG);
+  wheelRotation = clamp(wheelRotation + delta, -WHEEL_MAX_DEG, WHEEL_MAX_DEG);
+  wheelLastAngle = angle;
 });
-function releaseWheel() { wheelDragging = false; wheel.classList.remove('is-down'); }
+function releaseWheel() { wheelDragging = false; }
 wheel.addEventListener('pointerup', releaseWheel);
 wheel.addEventListener('pointercancel', releaseWheel);
 wheel.addEventListener('lostpointercapture', releaseWheel);
@@ -919,7 +921,6 @@ function setPaused(value) {
     wheelDragging = false;
     wheelRotation = 0;
     wheelRim.style.transform = 'rotate(0deg)';
-    wheel.classList.remove('is-down');
     updateCarAudio(0, CAR.maxSpeed, false, false);
     updateHorn(false);
     stopAirportAudio();

@@ -157,10 +157,6 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
   background: var(--kerb);
   border-radius: 3px;
 }
-.wheel.is-down .wheel-rim, .wheel.is-down .wheel-rim::after, .wheel.is-down .wheel-spoke {
-  border-color: var(--hazard); background: var(--hazard);
-}
-
 .compact .wheel { width: 118px; height: 118px; }
 .compact .wheel-rim { inset: 7px; border-width: 9px; }
 
