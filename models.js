@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex, BEND_ANGLE } from './data.js';
+import { cachedFetchArrayBuffer } from './glbCache.js';
 
 const TL_POLE_H = 3.0; // svetofor ustunining balandligi (metr), bosh qutisi shundan yuqorida boshlanadi
 
@@ -528,9 +529,7 @@ export function updateTrafficLightGroup(group, data, timeSec) {
 // Tayyor shahar modeli (ixtiyoriy, juda og'ir). Topilmasa xato tashlaydi.
 export async function loadCity(onProgress) {
   const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-  const gltf = await new GLTFLoader().loadAsync(CITY_URL, (e) => {
-    if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
-  });
+  const gltf = await loadGLTFCached(new GLTFLoader(), [CITY_URL], onProgress);
   const root = gltf.scene;
   root.traverse((obj) => {
     if (!obj.isMesh) return;
@@ -560,6 +559,21 @@ export function makeEnvironment(renderer) {
   return texture;
 }
 
+// `candidates` - sinab ko'riladigan fayl yo'llari ro'yxati (masalan ['cars/x.glb', 'x.glb']).
+// Har biri avval IndexedDB keshidan, bo'lmasa tarmoqdan olinadi (va keshga yoziladi), so'ng GLTFLoader
+// bilan .parse() qilinadi - shu bilan ikkinchi marta ochilganda fayl umuman qayta yuklab olinmaydi.
+async function loadGLTFCached(loader, candidates, onProgress) {
+  let lastError = null;
+  for (const path of candidates) {
+    try {
+      const buf = await cachedFetchArrayBuffer(path, onProgress);
+      const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+      return await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
+    } catch (err) { lastError = err; }
+  }
+  throw lastError || new Error('Fayl topilmadi');
+}
+
 async function makeGLTFLoader() {
   const [{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }] = await Promise.all([
     import('three/addons/loaders/GLTFLoader.js'),
@@ -578,16 +592,7 @@ async function makeGLTFLoader() {
 // GLB sahnasini yuklaydi (hali o'lchamlanmagan).
 export async function loadCarScene(car, onProgress) {
   const loader = await makeGLTFLoader();
-  let gltf = null, lastError = null;
-  for (const path of [`cars/${car.file}`, car.file]) {
-    try {
-      gltf = await loader.loadAsync(path, (e) => {
-        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
-      });
-      break;
-    } catch (err) { lastError = err; }
-  }
-  if (!gltf) throw lastError || new Error('Mashina fayli topilmadi');
+  const gltf = await loadGLTFCached(loader, [`cars/${car.file}`, car.file], onProgress);
 
   const model = gltf.scene;
   model.traverse((obj) => {
@@ -623,9 +628,43 @@ function visibleBox(root) {
 
 // Modelni o'lchamlaydi: uzunligi car.length metr, markazi (0,0) da, g'ildiraklari y = car.lift da,
 // old tomoni +z ga qaragan. Sozlamalar o'zgarsa shu funksiyani qayta chaqirish yetadi (qayta yuklash shart emas).
+// GLB ichidagi tugun nomiga qarab uni g'ildirak deb topadi va qaysi o'q/tomonga tegishli ekanini aniqlaydi.
+// Ko'pchilik (Sketchfab'dan olingan) mashina modellarida "wheel_front_left", "wheel_rear_right" kabi
+// nomlar ishlatiladi; qisqartmalar (FL, F_L, wheel.L.F kabi) uchun ham taxminiy moslik qidiriladi.
+function classifyWheelNode(rawName) {
+  const n = String(rawName || '').toLowerCase();
+  if (!/(wheel|tire|tyre)/.test(n)) return null;
+  const front = /front|\bfr\b|\bf(?![a-z])/.test(n) && !/rear/.test(n);
+  const rear = /rear|back|\brr\b/.test(n);
+  const left = /left|\bl(?![a-z])/.test(n) && !/right/.test(n);
+  const right = /right|\br(?![a-z])/.test(n) && !/left/.test(n);
+  if (!front && !rear) return null;
+  if (!left && !right) return null;
+  return { axle: front ? 'front' : 'rear', side: left ? 'left' : 'right' };
+}
+// G'ildirak deb topilgan tugunlar orasidan faqat eng "ota" (tashqi) bo'laklarini qoldiradi —
+// masalan "wheel_front_left" ichidagi "wheel_front_left_rim_0" kabi bolaklarini emas, chunki ular
+// avtomatik ravishda ota tugun bilan birga aylanadi.
+function collectWheelRoots(model) {
+  const matched = [];
+  model.traverse((node) => {
+    const info = classifyWheelNode(node.name);
+    if (info) matched.push({ node, ...info });
+  });
+  return matched.filter(({ node }) => {
+    let p = node.parent;
+    while (p) {
+      if (matched.some((m) => m.node === p)) return false;
+      p = p.parent;
+    }
+    return true;
+  });
+}
+
 export function fitCarModel(model, car) {
   model.removeFromParent();
   if (!model.userData.fitBox) model.userData.fitBox = visibleBox(model);   // bir marta o'lchanadi
+  const wheelRoots = collectWheelRoots(model);   // masshtablashdan oldin, asl modeldan qidiramiz
   const b = model.userData.fitBox;
   const raw = b.getSize(new THREE.Vector3());
 
@@ -650,27 +689,23 @@ export function fitCarModel(model, car) {
 
   const root = new THREE.Group();
   root.add(inner);
+  // Rul (steer) burilganda oldingi g'ildiraklar ham o'sha tomonga bursin, va barcha g'ildiraklar
+  // yurganda aylansin uchun — topilgan tugunlarni tashqariga (game.js foydalanishi uchun) chiqaramiz.
+  root.userData.wheels = wheelRoots.map((w) => w.node);
+  root.userData.frontPivots = wheelRoots.filter((w) => w.axle === 'front').map((w) => w.node);
   return root;
 }
 
 export async function loadCarModel(car, onProgress) {
-  return fitCarModel(await loadCarScene(car, onProgress), car);
+  const root = fitCarModel(await loadCarScene(car, onProgress), car);
+  return { group: root, wheels: root.userData.wheels, frontPivots: root.userData.frontPivots };
 }
 
 // airport.txt yozuvi (name, file, kind, length, rotate, lift ...) uchun GLB yuklaydi.
 // Fayl avval airport/ , keyin cars/ , keyin asosiy papkadan qidiriladi.
 export async function loadAirportScene(entry, onProgress) {
   const loader = await makeGLTFLoader();
-  let gltf = null, lastError = null;
-  for (const path of [`airport/${entry.file}`, `cars/${entry.file}`, entry.file]) {
-    try {
-      gltf = await loader.loadAsync(path, (e) => {
-        if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
-      });
-      break;
-    } catch (err) { lastError = err; }
-  }
-  if (!gltf) throw lastError || new Error('Samolyot/vertolyot fayli topilmadi');
+  const gltf = await loadGLTFCached(loader, [`airport/${entry.file}`, `cars/${entry.file}`, entry.file], onProgress);
 
   const model = gltf.scene;
   model.traverse((obj) => {
