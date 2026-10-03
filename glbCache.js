@@ -84,8 +84,24 @@ export async function cachedFetchArrayBuffer(url, onProgress) {
     return cached;
   }
   const buf = await fetchWithProgress(url, onProgress);
-  dbPut(url, buf);
+  dbPut(url, buf.slice(0));   // mustaqil nusxa: GLTFLoader/Draco qaytargan buferni "yeb qo'yishi" (detach) mumkin,
+                               // shu sabab kesh buzilib qolgan edi - endi saqlanadigan nusxaga bu ta'sir qilmaydi
   return buf;
+}
+
+// Bitta buzilgan yozuvni keshdan olib tashlaydi (masalan parse muvaffaqiyatsiz bo'lsa, qaytadan yuklab olish uchun).
+export async function evictGLBCache(url) {
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(url);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // jim o'tkazamiz
+  }
 }
 
 // Sozlamalarda "Keshni tozalash" kabi tugma uchun - hozircha ixtiyoriy, chaqirilmasa ham ishlayveradi.

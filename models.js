@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex, BEND_ANGLE } from './data.js';
-import { cachedFetchArrayBuffer } from './glbCache.js';
+import { cachedFetchArrayBuffer, evictGLBCache } from './glbCache.js';
 
 const TL_POLE_H = 3.0; // svetofor ustunining balandligi (metr), bosh qutisi shundan yuqorida boshlanadi
 
@@ -565,11 +565,18 @@ export function makeEnvironment(renderer) {
 async function loadGLTFCached(loader, candidates, onProgress) {
   let lastError = null;
   for (const path of candidates) {
+    const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
     try {
       const buf = await cachedFetchArrayBuffer(path, onProgress);
-      const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
       return await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
-    } catch (err) { lastError = err; }
+    } catch (err) {
+      // Kesh buzilgan bo'lishi mumkin (eski versiyada saqlangan) - tozalab, bir marta qaytadan tarmoqdan sinaymiz.
+      await evictGLBCache(path);
+      try {
+        const buf = await cachedFetchArrayBuffer(path, onProgress);
+        return await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
+      } catch (err2) { lastError = err2; }
+    }
   }
   throw lastError || new Error('Fayl topilmadi');
 }
