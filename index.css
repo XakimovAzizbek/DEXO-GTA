@@ -154,3 +154,35 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .road::after, .stars { animation: none; }
 }
+
+/* Google hisob ko'rsatkichi: tepada, avval xiraroq (blur), bosilganda tiniqlashadi */
+body.authing .stage { visibility: hidden; }
+
+.account {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  right: 16px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 14, 20, 0.55);
+  color: #fff;
+  font: 600 13px/1.2 'Barlow', system-ui, sans-serif;
+  cursor: pointer;
+  filter: blur(5px);
+  opacity: 0.7;
+  transition: filter 180ms ease, opacity 180ms ease;
+}
+.account.is-revealed { filter: blur(0); opacity: 1; }
+.account img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: block;
+  background: #333;
+  object-fit: cover;
+}
