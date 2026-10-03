@@ -1,4 +1,5 @@
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './data.js';
+import { requireUser, signOutUser } from './firebase.js';
 
 let settings = loadSettings();
 const saved = document.getElementById('saved');
@@ -46,6 +47,26 @@ document.getElementById('resetSettings').addEventListener('click', () => {
   settings = { ...DEFAULT_SETTINGS };
   render();
   commit();
+});
+
+// ---------- Hisob: chiqish, boshqa Google hisobidan kirish imkoni ----------
+const accountEmail = document.getElementById('accountEmail');
+const signOutBtn = document.getElementById('signOutBtn');
+
+requireUser().then((user) => {
+  if (user) accountEmail.textContent = user.email || user.displayName || 'Google hisobi';
+  else accountEmail.textContent = 'Kirilmagan';
+});
+
+signOutBtn.addEventListener('click', async () => {
+  signOutBtn.disabled = true;
+  signOutBtn.textContent = 'Chiqilmoqda…';
+  try {
+    await signOutUser();
+  } catch (err) {
+    console.warn('Hisobdan chiqishda xatolik:', err);
+  }
+  location.replace('sign-up.html');   // chiqgandan so'ng boshqa Google hisobidan kirish mumkin bo'ladi
 });
 
 render();

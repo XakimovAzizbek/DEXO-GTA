@@ -16,6 +16,10 @@ import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
 import { unlockCarAudio, updateCarAudio, setCarAudioActive, updateHorn } from './carAudio.js';
 import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
+// Eslatma: Firebase bu yerda ATAYLAB statik import qilinmagan — game.js offline o'yin (game.html) uchun
+// ham ishlatiladi, va u hech qachon online/Firebase'ga muhtoj bo'lmasligi kerak. Shu sababli Firebase
+// faqat pastdagi startMultiplayer() chaqirilganda (ya'ni faqat online o'yinda, player-game.js orqali)
+// dinamik import qilinadi — offline o'yinchi Firebase kodini umuman yuklamaydi.
 
 
 const $ = (id) => document.getElementById(id);
@@ -1222,6 +1226,7 @@ function frame(now) {
     drawMinimap();
     updateBillboards(dt);
     updateBots(dt);
+    updateRemotePlayers(dt);
     weather.update(dt);
   }
 
@@ -1231,6 +1236,100 @@ function frame(now) {
     fpsAcc += dt; fpsFrames++;
     if (fpsAcc >= 0.5) { fpsEl.textContent = `${Math.round(fpsFrames / fpsAcc)} FPS`; fpsAcc = 0; fpsFrames = 0; }
   }
+}
+
+// ---------- Online: zonadagi boshqa o'yinchilarni ko'rsatish ----------
+// Har bir o'yinchi o'z holatini (x,y,z,h,vehicle) davriy ravishda Realtime Database'ga yozadi;
+// boshqalarning holatini shu yerdan o'qib, ularning mashinasini (yoki vertolyot/samolyotini)
+// sahnada ko'rsatamiz va har freymda silliq (interpolyatsiya bilan) harakatlantiramiz.
+const remotePlayers = new Map();   // uid -> { group, wheels, kind, target:{x,y,z,h} }
+let multiplayerTimer = null;
+let multiplayerOffAdd = null, multiplayerOffChange = null, multiplayerOffRemove = null;
+
+function remoteAvatarFor(kind) {
+  const built = kind === 'heli' ? buildHeli() : kind === 'plane' ? buildPlane() : buildCar();
+  scene.add(built.group);
+  return built;
+}
+
+function dropRemote(uid) {
+  const entry = remotePlayers.get(uid);
+  if (!entry) return;
+  scene.remove(entry.group);
+  remotePlayers.delete(uid);
+}
+
+function upsertRemote(uid, data) {
+  if (!data || typeof data.x !== 'number' || typeof data.z !== 'number') return;   // hali pozitsiya yubormagan
+  const kind = data.vehicle === 'heli' || data.vehicle === 'plane' ? data.vehicle : 'car';
+  let entry = remotePlayers.get(uid);
+  if (!entry || entry.kind !== kind) {
+    if (entry) scene.remove(entry.group);
+    const built = remoteAvatarFor(kind);
+    entry = { group: built.group, wheels: built.wheels || [], kind, target: { x: data.x, y: data.y || 0, z: data.z, h: data.h || 0 } };
+    entry.group.position.set(data.x, data.y || 0, data.z);
+    entry.group.rotation.y = data.h || 0;
+    remotePlayers.set(uid, entry);
+  }
+  entry.target.x = data.x;
+  entry.target.y = data.y || 0;
+  entry.target.z = data.z;
+  entry.target.h = data.h || 0;
+}
+
+function updateRemotePlayers(dt) {
+  const k = Math.min(1, dt * 8);
+  for (const entry of remotePlayers.values()) {
+    const g = entry.group;
+    g.position.x += (entry.target.x - g.position.x) * k;
+    g.position.y += (entry.target.y - g.position.y) * k;
+    g.position.z += (entry.target.z - g.position.z) * k;
+    let dh = entry.target.h - g.rotation.y;
+    dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+    g.rotation.y += dh * k;
+    for (const w of entry.wheels) w.rotation.x += dt * 6;   // taxminiy aylanish — faqat vizual effekt
+  }
+}
+
+// player-game.js zonaga qo'shilgach shuni chaqiradi: o'z holatimizni yuborishni boshlaymiz
+// va zonadagi boshqalarni kuzatib, ularni sahnaga qo'shamiz. Firebase shu yerda, birinchi marta
+// chaqirilgandagina yuklanadi — offline o'yin (game.html) buni hech qachon chaqirmaydi.
+export async function startMultiplayer(zoneId, uid) {
+  const [{ db }, { ref: dbRef, onChildAdded, onChildChanged, onChildRemoved, update: dbUpdate }] = await Promise.all([
+    import('./firebase.js'),
+    import('https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js'),
+  ]);
+
+  const playersRef = dbRef(db, `zones/${zoneId}/players`);
+
+  multiplayerOffAdd = onChildAdded(playersRef, (snap) => {
+    if (snap.key !== uid) upsertRemote(snap.key, snap.val());
+  });
+  multiplayerOffChange = onChildChanged(playersRef, (snap) => {
+    if (snap.key !== uid) upsertRemote(snap.key, snap.val());
+  });
+  multiplayerOffRemove = onChildRemoved(playersRef, (snap) => dropRemote(snap.key));
+
+  const myRef = dbRef(db, `zones/${zoneId}/players/${uid}`);
+  multiplayerTimer = setInterval(() => {
+    if (paused) return;
+    dbUpdate(myRef, {
+      x: Math.round(car.x * 10) / 10,
+      y: Math.round(car.y * 10) / 10,
+      z: Math.round(car.z * 10) / 10,
+      h: Math.round(car.h * 100) / 100,
+      vehicle: vehicleMode,
+    }).catch(() => {});   // internet vaqtincha uzilsa ham o'yin davom etadi, keyingi urinishda yuboriladi
+  }, 150);
+}
+
+export function stopMultiplayer() {
+  if (multiplayerTimer) clearInterval(multiplayerTimer);
+  multiplayerTimer = null;
+  if (multiplayerOffAdd) multiplayerOffAdd();
+  if (multiplayerOffChange) multiplayerOffChange();
+  if (multiplayerOffRemove) multiplayerOffRemove();
+  for (const uid of [...remotePlayers.keys()]) dropRemote(uid);
 }
 
 // ---------- Ishga tushirish ----------

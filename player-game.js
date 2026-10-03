@@ -31,11 +31,15 @@ function fail(message) {
     zoneBadge.textContent = `${zoneLabel(zoneId)} — onlayn`;
   }
 
-  const leave = () => { leaveZone(zoneId, user.uid); };
+  const game = await import('./game.js');   // joy tasdiqlangach, asosiy o'yin dvigatelini ishga tushiramiz
+  await game.startMultiplayer(zoneId, user.uid);   // zonadagi boshqa o'yinchilarni ko'rsatish/ularga o'zimizni yuborish
+
+  const leave = () => {
+    game.stopMultiplayer();
+    leaveZone(zoneId, user.uid);
+  };
   addEventListener('pagehide', leave);
   addEventListener('beforeunload', leave);
   const leaveBtn = document.getElementById('leaveZoneBtn');
   if (leaveBtn) leaveBtn.addEventListener('click', leave);
-
-  await import('./game.js');   // joy tasdiqlangach, asosiy o'yin dvigatelini ishga tushiramiz
 })();

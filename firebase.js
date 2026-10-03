@@ -24,6 +24,9 @@ export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getDatabase(app);
 const provider = new GoogleAuthProvider();
+// Hisobdan chiqqandan keyin har doim hisob tanlash oynasi chiqsin — avvalgi hisobga avtomatik qaytmasin,
+// shu bois foydalanuvchi boshqa Google hisobidan kira oladi.
+provider.setCustomParameters({ prompt: 'select_account' });
 
 // Popup ba'zi mobil brauzer/WebView'larda bloklanadi — shunday holatlarda redirect usuliga o'tamiz.
 const REDIRECT_FALLBACK_CODES = new Set([
