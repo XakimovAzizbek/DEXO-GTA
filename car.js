@@ -100,7 +100,8 @@ async function show(car) {
   loading.hidden = false;
   $('loadingBar').style.width = '6%';
   try {
-    const model = await loadCarModel(car, (p) => { $('loadingBar').style.width = `${Math.round(6 + p * 94)}%`; });
+    const built = await loadCarModel(car, (p) => { $('loadingBar').style.width = `${Math.round(6 + p * 94)}%`; });
+    const model = built.group;
     if (mine !== token) { disposeModel(model); return; }
     stage.add(model);
     current = model;
