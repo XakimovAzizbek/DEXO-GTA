@@ -7,14 +7,16 @@
 
 const DB_NAME = 'dexo-gta-cache';
 const STORE = 'glb';
-const DB_VERSION = 1;
+const DB_VERSION = 2;   // 2: eski (buzilgan bo'lishi mumkin) keshni bir marta butunlay tozalash uchun
 
 function openDB() {
   return new Promise((resolve, reject) => {
     if (!('indexedDB' in window)) { reject(new Error('IndexedDB mavjud emas')); return; }
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
-      if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: 'url' });
+      // Eski versiyadagi hamma yozuvlarni o'chirib, toza boshlaymiz (oldin buzilib saqlangan nusxalar qolib ketmasin)
+      if (req.result.objectStoreNames.contains(STORE)) req.result.deleteObjectStore(STORE);
+      req.result.createObjectStore(STORE, { keyPath: 'url' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

@@ -562,19 +562,29 @@ export function makeEnvironment(renderer) {
 // `candidates` - sinab ko'riladigan fayl yo'llari ro'yxati (masalan ['cars/x.glb', 'x.glb']).
 // Har biri avval IndexedDB keshidan, bo'lmasa tarmoqdan olinadi (va keshga yoziladi), so'ng GLTFLoader
 // bilan .parse() qilinadi - shu bilan ikkinchi marta ochilganda fayl umuman qayta yuklab olinmaydi.
+// parse() ba'zan xato bermay, lekin bo'sh sahna qaytarishi mumkin (buzilgan kesh) - uni ham xato deb hisoblaymiz,
+// shunda kesh o'chirilib, fayl qaytadan yuklanadi.
+async function parseGLTFChecked(loader, buf, base) {
+  const gltf = await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
+  let meshes = 0;
+  gltf.scene.traverse((o) => { if (o.isMesh) meshes++; });
+  if (!meshes) throw new Error('GLB ichida model topilmadi (buzilgan bo\u2018lishi mumkin)');
+  return gltf;
+}
+
 async function loadGLTFCached(loader, candidates, onProgress) {
   let lastError = null;
   for (const path of candidates) {
     const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
     try {
       const buf = await cachedFetchArrayBuffer(path, onProgress);
-      return await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
+      return await parseGLTFChecked(loader, buf, base);
     } catch (err) {
       // Kesh buzilgan bo'lishi mumkin (eski versiyada saqlangan) - tozalab, bir marta qaytadan tarmoqdan sinaymiz.
       await evictGLBCache(path);
       try {
         const buf = await cachedFetchArrayBuffer(path, onProgress);
-        return await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
+        return await parseGLTFChecked(loader, buf, base);
       } catch (err2) { lastError = err2; }
     }
   }
