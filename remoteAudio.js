@@ -252,3 +252,70 @@ export function createRemoteVoice(kind) {
     },
   };
 }
+
+// ---- To'qnashuv (avariya) ovozi: qarsillagan zarba + metall jaranglashi ----
+// strength: 1..10 (urilish kuchi), dist: eshituvchigacha masofa (m) - uzoqda urilsa pastroq eshitiladi, pan: -1..1.
+// Mening o'z mashinam urilganda dist = 0 beriladi.
+export function playCrashSound(strength = 5, dist = 0, pan = 0) {
+  if (!ctx) return;
+  const near = atten(dist, 12, 280);
+  const vol = Math.min(1, 0.28 + strength * 0.07) * near;
+  if (vol < 0.02) return;
+  if (ctx.state === 'suspended') ctx.resume();
+  const t0 = ctx.currentTime;
+  const out = ctx.createGain();
+  out.gain.value = vol;
+  let tail = out;
+  if (ctx.createStereoPanner) {
+    const p = ctx.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, pan));
+    out.connect(p);
+    tail = p;
+  }
+  tail.connect(ctx.destination);
+
+  // 1) Shovqin portlashi - "krrash"
+  const noise = ctx.createBufferSource();
+  noise.buffer = getNoise(ctx);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 700 + strength * 120;
+  bp.Q.value = 0.7;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t0);
+  ng.gain.exponentialRampToValueAtTime(0.9, t0 + 0.006);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28 + strength * 0.03);
+  noise.connect(bp).connect(ng).connect(out);
+  noise.start(t0);
+  noise.stop(t0 + 0.7);
+
+  // 2) Past "dum" - zarba
+  const thump = ctx.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(140, t0);
+  thump.frequency.exponentialRampToValueAtTime(42, t0 + 0.22);
+  const tg = ctx.createGain();
+  tg.gain.setValueAtTime(0.0001, t0);
+  tg.gain.exponentialRampToValueAtTime(0.8, t0 + 0.01);
+  tg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3);
+  thump.connect(tg).connect(out);
+  thump.start(t0);
+  thump.stop(t0 + 0.35);
+
+  // 3) Metall jaranglashi (faqat kuchli urilishda baland)
+  const ring = ctx.createOscillator();
+  ring.type = 'square';
+  ring.frequency.value = 310 + strength * 14;
+  const rf = ctx.createBiquadFilter();
+  rf.type = 'lowpass';
+  rf.frequency.value = 1800;
+  const rg = ctx.createGain();
+  rg.gain.setValueAtTime(0.0001, t0);
+  rg.gain.exponentialRampToValueAtTime(0.12 + strength * 0.015, t0 + 0.008);
+  rg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+  ring.connect(rf).connect(rg).connect(out);
+  ring.start(t0);
+  ring.stop(t0 + 0.3);
+
+  setTimeout(() => { try { out.disconnect(); } catch { /* ok */ } }, 1000);
+}

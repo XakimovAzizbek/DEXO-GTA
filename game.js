@@ -16,7 +16,8 @@ import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
 import { unlockCarAudio, updateCarAudio, setCarAudioActive, updateHorn } from './carAudio.js';
 import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
-import { initRemoteAudio, createRemoteVoice, REMOTE_HEAR_RANGE } from './remoteAudio.js';
+import { initRemoteAudio, createRemoteVoice, REMOTE_HEAR_RANGE, playCrashSound } from './remoteAudio.js';
+import { MAX_DENTS, measureModel, applyDent, repairModel, disposeCrash, encodeDents, decodeDents } from './crash.js';
 // Eslatma: Firebase bu yerda ATAYLAB statik import qilinmagan — game.js offline o'yin (game.html) uchun
 // ham ishlatiladi, va u hech qachon online/Firebase'ga muhtoj bo'lmasligi kerak. Shu sababli Firebase
 // faqat pastdagi startMultiplayer() chaqirilganda (ya'ni faqat online o'yinda, player-game.js orqali)
@@ -375,6 +376,7 @@ heliGroup.add(heliBuilt.group);
 const planeBuilt = buildPlane();
 planeGroup.add(planeBuilt.group);
 const VEHICLE_GROUPS = { car: carGroup, heli: heliGroup, plane: planeGroup };
+const airRoots = { heli: heliBuilt.group, plane: planeBuilt.group };   // hozir ko'rinib turgan model (GLB bo'lsa o'sha) - pachoqlash shunga qo'llanadi
 const VEHICLE_SPIN = { heli: [heliBuilt.spin, heliBuilt.spin2], plane: [planeBuilt.spin] };
 const VEHICLE_LABEL = { car: 'Mashina', heli: 'Vertolyot', plane: 'Samolyot' };
 const VEHICLE_TYPES = {
@@ -500,6 +502,7 @@ async function setupAirport(setText, setProgress) {
       const model = await loadAirportModel(profile, setProgress);
       model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
       group.add(model);
+      airRoots[mode] = model;
       fallback.group.visible = false;   // GLB muvaffaqiyatli - kod bilan yasalgan zaxira modelni yashiramiz
 
       // Nomi bo'yicha parrak/rotor qismlarini topib, mavjud aylantirish tizimiga ulaymiz (pastdagi VEHICLE_SPIN).
@@ -523,6 +526,7 @@ const CAR = {
 let camHeading = 0;
 
 function respawn() {
+  repairAllVehicles();
   car.x = spawn.x; car.z = spawn.z; car.h = spawn.r;
   car.vx = 0; car.vz = 0; car.steer = 0;
   car.y = groundHeightAt(ramps, car.x, car.z); car.vy = 0;
@@ -1190,6 +1194,7 @@ function frame(now) {
     updateWheel(dt);
     const steps = Math.max(1, Math.ceil(dt / (1 / 60)));
     for (let i = 0; i < steps; i++) stepVehicle(dt / steps);
+    resolveVehicleCollisions();
 
     const speed = Math.hypot(car.vx, car.vz);
     const vf = car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h);
@@ -1238,6 +1243,145 @@ function frame(now) {
   if (settings.showFps) {
     fpsAcc += dt; fpsFrames++;
     if (fpsAcc >= 0.5) { fpsEl.textContent = `${Math.round(fpsFrames / fpsAcc)} FPS`; fpsAcc = 0; fpsFrames = 0; }
+  }
+}
+
+// ---------- Avariya: onlayn o'yinchilar bir-biriga urilsa ----------
+// Har bir telefon FAQAT o'z ulovini tekshiradi (boshqalarning joyi allaqachon bor - qo'shimcha trafik kerak emas).
+// Urilganda: itarib chiqaradi, tezlikni kamaytiradi, ovoz chiqaradi va o'z modelining urilgan joyini pachoqlaydi.
+// Pachoq ro'yxati Firebase'ga faqat urilgan paytda (kichik matn bilan) yoziladi - keyin kirganlar ham ko'radi.
+// Balandlik hisobga olinadi: yuqoridagi samolyot pastdagi mashinaga tegmaydi, yerdagi samolyot esa tegadi.
+const crashDents = { car: [], heli: [], plane: [] };   // har bir ulov turining pachoqlari
+let localCrashCd = 0;
+let localCrashSoundAt = 0;
+
+function localRoot(mode) {
+  if (mode === 'car') return carModel && carModel.group ? carModel.group : null;
+  return airRoots[mode] || null;
+}
+function localSkip(mode) {
+  if (mode === 'car') return carModel && carModel.wheels ? carModel.wheels : [];
+  return (VEHICLE_SPIN[mode] || []).filter(Boolean);
+}
+function localDims(mode) {
+  const root = localRoot(mode);
+  if (!root) return null;
+  if (!root.userData.crashDims) root.userData.crashDims = measureModel(root);
+  return root.userData.crashDims;
+}
+
+// Urilish shakli: model o'lchamidan (samolyot/vertolyotda qanot/rotor hisobga olinmasin deb eni cheklanadi).
+function bodyFrom(dims, kind) {
+  const l = Math.max(dims.l, 1);
+  const w = kind === 'heli' ? Math.min(dims.w, l * 0.45) : kind === 'plane' ? Math.min(dims.w, l * 0.7) : dims.w;
+  return { hw: Math.max(w, 1.2) / 2, hd: l / 2, minY: dims.minY, maxY: dims.maxY };
+}
+function obbOf(x, z, h, hw, hd) {
+  const c = Math.cos(h), s = Math.sin(h);
+  return { x, z, rx: c, rz: -s, fx: s, fz: c, hw, hd };
+}
+// Ikki burchakli qutining kesishishi (SAT): kirib borish chuqurligi va A->B yo'nalishi.
+function obbHit(a, b) {
+  const axes = [[a.rx, a.rz], [a.fx, a.fz], [b.rx, b.rz], [b.fx, b.fz]];
+  const dx = b.x - a.x, dz = b.z - a.z;
+  let best = Infinity, nx = 0, nz = 0, ra = 0;
+  for (const [ax, az] of axes) {
+    const rA = a.hw * Math.abs(ax * a.rx + az * a.rz) + a.hd * Math.abs(ax * a.fx + az * a.fz);
+    const rB = b.hw * Math.abs(ax * b.rx + az * b.rz) + b.hd * Math.abs(ax * b.fx + az * b.fz);
+    const d = dx * ax + dz * az;
+    const ov = rA + rB - Math.abs(d);
+    if (ov <= 0) return null;
+    if (ov < best) { best = ov; const sg = d >= 0 ? 1 : -1; nx = ax * sg; nz = az * sg; ra = rA; }
+  }
+  return { pen: best, nx, nz, ra };
+}
+
+function repairAllVehicles() {
+  for (const mode of ['car', 'heli', 'plane']) {
+    const root = localRoot(mode);
+    if (root) repairModel(root);
+    crashDents[mode] = [];
+  }
+}
+
+function crashLocal(hit, mb, dims, lo, hi, closing) {
+  const s = clamp(Math.round(closing / 2.2), 1, 10);
+  playCrashSound(s, 0, 0);
+  localCrashSoundAt = performance.now();
+  const list = crashDents[vehicleMode];
+  const root = localRoot(vehicleMode);
+  if (!root || list.length >= MAX_DENTS) return;
+  // Urilgan nuqta: ikkinchi ulov markaziga eng yaqin chekka nuqta (mashinaning o'z koordinatasida)
+  const c = Math.cos(car.h), sn = Math.sin(car.h);
+  let lx = hit.nx * hit.ra * c - hit.nz * hit.ra * sn;
+  let lz = hit.nx * hit.ra * sn + hit.nz * hit.ra * c;
+  lx = clamp(lx, -mb.hw, mb.hw);
+  lz = clamp(lz, -mb.hd, mb.hd);
+  const h = mb.maxY - mb.minY;
+  const ly = clamp(((lo + hi) / 2) - car.y, mb.minY + h * 0.2, mb.minY + h * 0.8);
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const dent = { x: r1(lx), y: r1(ly), z: r1(lz), s };
+  list.push(dent);
+  applyDent(root, dent, { dims, skip: localSkip(vehicleMode) });
+}
+
+function resolveVehicleCollisions() {
+  if (!remotePlayers.size) return;
+  const dims = localDims(vehicleMode);
+  if (!dims) return;
+  const mb = bodyFrom(dims, vehicleMode);
+  const now = performance.now();
+  for (const e of remotePlayers.values()) {
+    if (!e.model || !e.dims || !e.group.visible) continue;
+    const g = e.group;
+    const eb = bodyFrom(e.dims, e.kind);
+    const dx = g.position.x - car.x, dz = g.position.z - car.z;
+    const reach = Math.hypot(mb.hw, mb.hd) + Math.hypot(eb.hw, eb.hd);
+    if (dx * dx + dz * dz > reach * reach) continue;
+    // Balandlik bo'yicha kesishmasa (masalan samolyot tepada uchib o'tyapti) - to'qnashmaydi
+    const aLo = car.y + mb.minY, aHi = car.y + mb.maxY;
+    const bLo = g.position.y + eb.minY, bHi = g.position.y + eb.maxY;
+    if (aLo >= bHi - 0.3 || bLo >= aHi - 0.3) continue;   // kamida 30 sm balandlikda kesishsin
+    const hit = obbHit(obbOf(car.x, car.z, car.h, mb.hw, mb.hd), obbOf(g.position.x, g.position.z, g.rotation.y, eb.hw, eb.hd));
+    if (!hit) continue;
+
+    // Ikkalasi ham yarmidan itariladi (ikkinchi telefon ham o'zini yarim itaradi)
+    const push = hit.pen * 0.5 + 0.02;
+    car.x -= hit.nx * push;
+    car.z -= hit.nz * push;
+    const closing = (car.vx - e.vx) * hit.nx + (car.vz - e.vz) * hit.nz;   // yaqinlashish tezligi (m/s)
+    if (closing > 0) {
+      const j = closing * 0.625;   // biroz qaytish (elastiklik)
+      car.vx -= hit.nx * j;
+      car.vz -= hit.nz * j;
+    }
+    if (closing > 2.5 && now > e.crashCd && now > localCrashCd) {
+      e.crashCd = now + 400;
+      localCrashCd = now + 250;
+      crashLocal(hit, mb, dims, Math.max(aLo, bLo), Math.min(aHi, bHi), closing);
+    }
+  }
+}
+
+// Boshqa o'yinchining pachoqlarini uning modeliga qo'llaydi (yangilari qo'shilsa, ovoz ham chiqadi).
+function syncRemoteDents(entry, allowSound) {
+  if (!entry.model || !entry.dims) return;
+  const list = entry.dents;
+  if (list.length < entry.dentApplied) {   // ta'mirlangan (boshiga qaytgan)
+    repairModel(entry.model);
+    entry.dentApplied = 0;
+  }
+  if (list.length === entry.dentApplied) return;
+  const skip = [...entry.wheels, ...entry.spin];
+  for (let i = entry.dentApplied; i < list.length; i++) applyDent(entry.model, list[i], { dims: entry.dims, skip });
+  entry.dentApplied = list.length;
+  const now = performance.now();
+  if (allowSound && now - localCrashSoundAt > 700) {   // o'zim urilgan bo'lsam, ovoz allaqachon chiqqan
+    const g = entry.group;
+    const dx = g.position.x - car.x, dz = g.position.z - car.z;
+    const dist = Math.hypot(dx, dz, g.position.y - car.y);
+    const rx = -Math.cos(car.h), rz = Math.sin(car.h);
+    playCrashSound(list[list.length - 1].s, dist, ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.75);
   }
 }
 
@@ -1334,6 +1478,7 @@ function prepareRemoteMaterials(root) {
 
 function clearRemoteModel(entry) {
   if (entry.model) {
+    disposeCrash(entry.model);
     entry.group.remove(entry.model);
     for (const m of entry.mats) m.dispose();
   }
@@ -1344,6 +1489,8 @@ function clearRemoteModel(entry) {
   entry.fade = 1;
   entry.appliedFade = -1;
   entry.shadow = null;
+  entry.dims = null;
+  entry.dentApplied = 0;
 }
 
 function attachRemoteModel(entry, root, wheels, spin) {
@@ -1352,6 +1499,9 @@ function attachRemoteModel(entry, root, wheels, spin) {
   entry.spin = spin;
   entry.mats = prepareRemoteMaterials(root);
   entry.group.add(root);
+  entry.dims = measureModel(root);
+  entry.dentApplied = 0;
+  syncRemoteDents(entry, false);   // modelga o'sha paytdagi pachoqlarni darhol qo'llaymiz (ovozsiz)
 }
 
 async function applyRemoteModel(entry, kind, data) {
@@ -1405,6 +1555,7 @@ function upsertRemote(uid, data) {
   const key = kind === 'car' ? `car:${data.car || ''}` : `${kind}:${data.air || ''}`;
   const now = performance.now();
   let entry = remotePlayers.get(uid);
+  let created = false;
   if (!entry) {
     const group = new THREE.Group();
     group.position.set(data.x, data.y || 0, data.z);
@@ -1413,16 +1564,20 @@ function upsertRemote(uid, data) {
     entry = {
       group, kind, key: '', model: null, mats: [], wheels: [], spin: [],
       target: { x: data.x, y: data.y || 0, z: data.z, h: data.h || 0 },
-      speed: 0, lastAt: now, hornUntil: 0, voice: null,
+      speed: 0, vx: 0, vz: 0, lastAt: now, horn: false, voice: null,
       fade: 1, appliedFade: -1, shadow: null, token: 0, dropped: false,
+      dims: null, dents: [], dentApplied: 0, crashCd: 0,
     };
+    created = true;
     remotePlayers.set(uid, entry);
   } else {
     // Tezlikni pozitsiya o'zgarishidan taxminlaymiz (ovoz balandligi/tonini belgilash uchun) - qo'shimcha trafik kerak emas
     const dtU = (now - entry.lastAt) / 1000;
     if (dtU > 0.03) {
-      const inst = Math.hypot(data.x - entry.target.x, data.z - entry.target.z) / dtU;
-      entry.speed += (inst - entry.speed) * 0.4;
+      const ivx = (data.x - entry.target.x) / dtU, ivz = (data.z - entry.target.z) / dtU;
+      entry.vx += (ivx - entry.vx) * 0.4;
+      entry.vz += (ivz - entry.vz) * 0.4;
+      entry.speed += (Math.hypot(ivx, ivz) - entry.speed) * 0.4;
       entry.lastAt = now;
     }
   }
@@ -1431,10 +1586,13 @@ function upsertRemote(uid, data) {
   entry.target.y = data.y || 0;
   entry.target.z = data.z;
   entry.target.h = data.h || 0;
-  if (data.horn) entry.hornUntil = now + 220;
-  if (entry.key !== key) {   // birinchi marta yoki ulov/model almashtirilgan
+  entry.horn = !!data.horn;   // signal holati (faqat o'zgarganda keladi, shuning uchun holat sifatida saqlaymiz)
+  entry.dents = decodeDents(data.cr);   // boshqa o'yinchining pachoqlari (yangi kirganlar ham ko'radi)
+  if (entry.key !== key) {   // birinchi marta yoki ulov/model almashtirilgan (pachoqlar model yuklangach qo'llanadi)
     entry.key = key;
     applyRemoteModel(entry, kind, data);
+  } else {
+    syncRemoteDents(entry, !created);
   }
 }
 
@@ -1467,7 +1625,7 @@ function updateRemotePlayers(dt) {
     let dh = entry.target.h - g.rotation.y;
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     g.rotation.y += dh * k;
-    if (now - entry.lastAt > 600) entry.speed *= Math.exp(-dt * 3);   // yangilanish kelmasa, to'xtab qolgan deb hisoblaymiz
+    if (now - entry.lastAt > 600) { const dec = Math.exp(-dt * 3); entry.speed *= dec; entry.vx *= dec; entry.vz *= dec; }   // yangilanish kelmasa, to'xtab qolgan deb hisoblaymiz
 
     const dx = g.position.x - car.x, dy = g.position.y - car.y, dz = g.position.z - car.z;
     const dist = Math.hypot(dx, dy, dz);
@@ -1496,7 +1654,7 @@ function updateRemotePlayers(dt) {
           dist,
           pan: ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.75,
           speed: entry.speed,
-          horn: now < entry.hornUntil,
+          horn: entry.horn,
         });
       }
     } else if (entry.voice) {
@@ -1531,11 +1689,20 @@ export async function startMultiplayer(zoneId, uid) {
   multiplayerOffRemove = onChildRemoved(playersRef, (snap) => dropRemote(snap.key));
 
   const myRef = dbRef(db, `zones/${zoneId}/players/${uid}`);
+  const lastSent = {};   // oxirgi muvaffaqiyatli yuborilgan qiymatlar - faqat o'zgarganini yuboramiz (Firebase limiti tejaladi)
+  let lastFullAt = performance.now();
   multiplayerTimer = setInterval(() => {
-    if (paused) return;
+    if (paused) {
+      if (lastSent.horn) dbUpdate(myRef, { horn: false }).then(() => { lastSent.horn = false; }).catch(() => {});
+      return;
+    }
+    if (performance.now() - lastFullAt > 10000) {   // har 10 soniyada to'liq yozuvni qayta yuboramiz (aloqa uzilib yozuv o'chib ketgan bo'lsa, tiklanadi)
+      for (const k of Object.keys(lastSent)) delete lastSent[k];
+      lastFullAt = performance.now();
+    }
     const horn = vehicleMode === 'car' && (input.horn || hornLatch);
     hornLatch = false;
-    dbUpdate(myRef, {
+    const next = {
       x: Math.round(car.x * 10) / 10,
       y: Math.round(car.y * 10) / 10,
       z: Math.round(car.z * 10) / 10,
@@ -1544,7 +1711,15 @@ export async function startMultiplayer(zoneId, uid) {
       car: carProfile.name || null,                                  // qaysi mashina - boshqalar shuni GLB qilib ko'radi
       air: vehicleMode === 'car' ? null : (airportProfiles[vehicleMode].name || null),   // qaysi samolyot/vertolyot
       horn,
-    }).catch(() => {});   // internet vaqtincha uzilsa ham o'yin davom etadi, keyingi urinishda yuboriladi
+      cr: encodeDents(crashDents[vehicleMode]),                      // pachoqlar (faqat urilganda o'zgaradi)
+    };
+    const changed = {};
+    let any = false;
+    for (const k of Object.keys(next)) {
+      if (lastSent[k] !== next[k]) { changed[k] = next[k]; any = true; }
+    }
+    if (!any) return;   // joyida turgan o'yinchi hech narsa yubormaydi
+    dbUpdate(myRef, changed).then(() => Object.assign(lastSent, changed)).catch(() => {});   // internet uzilsa, keyingi urinishda qayta yuboriladi
   }, 150);
 }
 
