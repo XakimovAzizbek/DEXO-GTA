@@ -161,7 +161,14 @@ function syncControls() {
     input.value = v;
     output.textContent = fmt(def, v);
   }
-  $('flip').textContent = profile.rotate === 180 ? 'Teskari' : 'Normal';
+  updateFlipLabels();
+}
+
+// Oldi/orqa almashtirish holatini ikkala tugmada ko'rsatadi
+function updateFlipLabels() {
+  const flipped = profile.rotate === 180;
+  $('flip').textContent = flipped ? 'Teskari' : 'Normal';
+  $('flipQuick').classList.toggle('is-flipped', flipped);
 }
 
 function setValue(def, v) {
@@ -185,12 +192,14 @@ $('fold').addEventListener('click', () => {
   $('fold').setAttribute('aria-expanded', String(!folded));
 });
 
-$('flip').addEventListener('click', () => {
+function flipFront() {
   profile.rotate = profile.rotate === 180 ? 0 : 180;
-  $('flip').textContent = profile.rotate === 180 ? 'Teskari' : 'Normal';
+  updateFlipLabels();
   refit();
   saveDraftSoon();
-});
+}
+$('flip').addEventListener('click', flipFront);
+$('flipQuick').addEventListener('click', flipFront);
 $('demo').addEventListener('change', (e) => { test.demo = e.target.checked; });
 $('guideChk').addEventListener('change', (e) => { $('guides').classList.toggle('is-on', e.target.checked); });
 $('guides').classList.add('is-on');

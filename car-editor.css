@@ -60,6 +60,8 @@ body {
   border: 2px solid var(--kerb); border-radius: 10px; background: transparent;
   font-weight: 600; font-size: 14px;
 }
+.fold--flip { border-color: var(--hazard); white-space: nowrap; }
+.fold--flip.is-flipped { background: var(--hazard); color: #14171d; }
 
 .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
 .tabs button {
