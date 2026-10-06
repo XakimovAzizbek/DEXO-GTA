@@ -1,3 +1,12 @@
+name: COBALT
+car: chevrolet_cobalt_ltz_2014-v1.glb
+camdist: 8
+camheight: 3.1
+aimy: 2.9
+fov: 54
+fovspeed: 0.05
+follow: 20
+
 name: mercedes-benz g class amg g 63
 car: 2020_mercedes-benz_g-class_amg_g_63.glb
 length: 7
