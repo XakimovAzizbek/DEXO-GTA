@@ -1,6 +1,9 @@
 name: COBALT
 car: chevrolet_cobalt_ltz_2014-v1.glb
+length: 5.4
 rotate: 180
+lift: -0.12
+carz: 2.5
 camdist: 8
 camheight: 3.1
 aimy: 2.9
