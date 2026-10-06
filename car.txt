@@ -118,12 +118,14 @@ aimy: 3.5
 
 name: BMW M4
 car: bmw_m4csl-v1.glb
+length: 6.3
+rotate: 180
 carz: -2.7
 camdist: 8
-camheight: 3.4
+camheight: 3.2
 aimy: 3.2
 fov: 62
-fovspeed: 0.8
+fovspeed: 0.05
 follow: 20
 
 name: MATIZ
