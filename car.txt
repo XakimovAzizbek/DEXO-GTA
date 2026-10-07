@@ -1,3 +1,12 @@
+name: VAZ
+car: lada_vaz-2103_zhiguli-v1.glb
+length: 7
+camdist: 9
+camheight: 3.7
+aimy: 3.2
+fovspeed: 0.05
+follow: 20
+
 name: COBALT
 car: chevrolet_cobalt_ltz_2014-v1.glb
 length: 5.4
