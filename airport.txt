@@ -6,3 +6,7 @@ rotate: 180
 name: Helicopter
 helicopter: helicopter.glb
 length: 14.5
+
+name: Rafale M
+airplane: dassault_rafale_m_-_fighter_jet_-_free-v1.glb
+length: 15.3
