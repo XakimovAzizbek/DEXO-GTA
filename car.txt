@@ -111,10 +111,15 @@ light: shape=round func=brake color=#ff2a2a x=0.7 y=1.3 z=-2.22 size=0.35 mirror
 
 name: ONIX
 car: chevrolet_onix-v1.glb
+length: 5.7
+rotate: 180
 carz: -6
 camdist: 9
-camheight: 3.6
-aimy: 3.5
+camheight: 3.4
+aimy: 3
+fov: 52
+fovspeed: 0.05
+follow: 20
 
 name: BMW M4
 car: bmw_m4csl-v1.glb
