@@ -1,6 +1,10 @@
 name: MERSCEDES
 car: mercedes_190e_evo_1982_3d_model_free-v1.glb
 length: 7
+camdist: 8
+camheight: 4
+fovspeed: 0.05
+follow: 20
 
 name: BUGGATI
 car: andrew_tates_bugatti_pur_sport-v1.glb
@@ -11,6 +15,12 @@ car: bmw_e34_stance_style-v1.glb
 name: BRABUS
 car: brabus_g900_rocket_edition-v2.glb
 length: 7
+camdist: 9.5
+camheight: 3.9
+aimy: 3.7
+fov: 63
+fovspeed: 0.05
+follow: 20
 
 name: LADA VAZ-2103
 car: lada_vaz-2103_zhiguli-v1.glb
