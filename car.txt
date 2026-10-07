@@ -1,4 +1,4 @@
-name: VAZ
+name: LADA VAZ-2103
 car: lada_vaz-2103_zhiguli-v1.glb
 length: 7
 camdist: 9
