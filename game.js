@@ -148,7 +148,20 @@ for (const list of byType.values()) {
   mesh.receiveShadow = shadowsOn;
   scene.add(mesh);
 }
-const colliders = objects.map(makeCollider).filter(Boolean);
+// To'siqlarning taxminiy balandligi (metr) - samolyot/vertolyot tepasidan uchib o'tadimi yoki uriladimi shuni aniqlash uchun.
+const COLLIDER_TOP = {
+  house_small: 6.5, house_two: 9, shop: 6.5, tower: 39, billboard: 17,
+  tree_pine: 8.4, tree_round: 7.2,
+  mountain_big: 60, mountain_small: 30, hill: 6, rock: 3.4, ridge: 8,
+};
+const colliders = [];
+for (const o of objects) {
+  const c = makeCollider(o);
+  if (!c) continue;
+  c.top = (COLLIDER_TOP[o.t] || 8) * (o.s || 1);
+  c.cone = CATALOG[o.t].kind === 'mountain';   // tog' tepaga qarab ingichkalashadi (konus)
+  colliders.push(c);
+}
 const ramps = objects.map(makeRamp).filter(Boolean);
 const routes = buildRoutes(objects);
 
@@ -341,6 +354,18 @@ function updateBots(dt) {
 function resolveBotCollisions() {
   if (!fleet) return;
   const fx = Math.sin(car.h), fz = Math.cos(car.h);
+  // Botning tezligini joyi o'zgarishidan topamiz (urilish kuchi ikkalasining nisbiy tezligiga bog'liq)
+  const tNow = performance.now();
+  for (const bot of fleet.bots) {
+    if (bot._lt === undefined) { bot._lt = tNow; bot._lx = bot.x; bot._lz = bot.z; bot._vx = 0; bot._vz = 0; continue; }
+    const dtB = tNow - bot._lt;
+    if (dtB >= 30) {
+      if (dtB < 400) { bot._vx = (bot.x - bot._lx) * 1000 / dtB; bot._vz = (bot.z - bot._lz) * 1000 / dtB; }
+      else { bot._vx = 0; bot._vz = 0; }
+      bot._lt = tNow; bot._lx = bot.x; bot._lz = bot.z;
+    }
+  }
+  let impact = 0, ix = 0, iz = 0;
   for (const off of CAR.circles) {
     const cx = car.x + fx * off, cz = car.z + fz * off;
     for (const bot of fleet.bots) {
@@ -352,10 +377,13 @@ function resolveBotCollisions() {
       const nx = dx / d, nz = dz / d, pen = minDist - d;
       car.x += nx * pen; car.z += nz * pen;
       const vn = car.vx * nx + car.vz * nz;
+      const closeB = -((car.vx - (bot._vx || 0)) * nx + (car.vz - (bot._vz || 0)) * nz);   // nisbiy yaqinlashish tezligi
+      if (closeB > impact) { impact = closeB; ix = -nx; iz = -nz; }
       if (vn < 0) { car.vx -= 1.15 * vn * nx; car.vz -= 1.15 * vn * nz; }
       bot.speed = Math.max(0, bot.speed * 0.5);
     }
   }
+  reportImpact(ix, iz, impact);
 }
 
 // ---------- O'yinchi mashinasi ----------
@@ -663,6 +691,7 @@ function stepFly(dt) {
   car.y += climb * dt;
   car.y = clamp(car.y, minY, CAR.maxAlt);
   car.vy = 0;
+  resolveFlyCollisions();
 }
 
 function stepVehicle(dt) {
@@ -691,6 +720,7 @@ function updateVehicleAudio(vf) {
 }
 
 function resolveCollisions() {
+  let impact = 0, ix = 0, iz = 0;   // eng kuchli urilish: tezlik va to'siq tomon yo'nalishi
   for (let pass = 0; pass < 2; pass++) {
     const fx = Math.sin(car.h), fz = Math.cos(car.h);
     for (const off of CAR.circles) {
@@ -704,6 +734,7 @@ function resolveCollisions() {
         car.z += hit.nz * hit.pen;
         const vn = car.vx * hit.nx + car.vz * hit.nz;
         if (vn < 0) {
+          if (-vn > impact) { impact = -vn; ix = -hit.nx; iz = -hit.nz; }
           car.vx -= 1.15 * vn * hit.nx;
           car.vz -= 1.15 * vn * hit.nz;
         }
@@ -717,12 +748,14 @@ function resolveCollisions() {
         car.z += hit.nz * hit.pen;
         const vn = car.vx * hit.nx + car.vz * hit.nz;
         if (vn < 0) {
+          if (-vn > impact) { impact = -vn; ix = -hit.nx; iz = -hit.nz; }
           car.vx -= 1.15 * vn * hit.nx;
           car.vz -= 1.15 * vn * hit.nz;
         }
       }
     }
   }
+  reportImpact(ix, iz, impact);
 }
 
 // ---------- Kamera ----------
@@ -1323,6 +1356,72 @@ function crashLocal(hit, mb, dims, lo, hi, closing) {
   const dent = { x: r1(lx), y: r1(ly), z: r1(lz), s };
   list.push(dent);
   applyDent(root, dent, { dims, skip: localSkip(vehicleMode) });
+}
+
+// ---------- Uy, bino, tog', daraxt, bot va hokazoga urilish: tezligiga qarab pachoq ----------
+// Har qanday to'siqqa urilganda urilish tezligi (m/s) o'lchanadi: sekin tegsa faqat itariladi, tez urilsa
+// tekkan joyi tezligiga qarab chuqurroq pachoq bo'ladi. Pachoq ro'yxati boshqalarga ham ko'rinadi (yuqoridagi tizim).
+let staticCrashCd = 0;
+initRemoteAudio();   // zarba ovozi oflayn o'yinda ham chiqishi uchun (birinchi teginishda yoqiladi)
+
+// (nx, nz) - bizdan to'siq tomonga yo'nalish; closing - urilish tezligi.
+function reportImpact(nx, nz, closing) {
+  if (closing < 2.5) return;
+  const now = performance.now();
+  if (now < staticCrashCd) return;
+  staticCrashCd = now + 450;
+  const dims = localDims(vehicleMode);
+  if (!dims) return;
+  const mb = bodyFrom(dims, vehicleMode);
+  const c = Math.cos(car.h), sn = Math.sin(car.h);
+  const ra = mb.hw * Math.abs(nx * c - nz * sn) + mb.hd * Math.abs(nx * sn + nz * c);
+  const mid = car.y + (mb.minY + mb.maxY) / 2;
+  crashLocal({ nx, nz, ra }, mb, dims, mid, mid, closing);
+}
+
+// Samolyot/vertolyot: balandligi to'siqdan past bo'lsagina uriladi (tepasidan uchib o'tsa tegmaydi).
+// Tog' tepaga qarab ingichkalashadi, shuning uchun yuqoridan uchganda uning chekkasiga tegmaydi.
+const _flyCone = { shape: 'circle', x: 0, z: 0, r: 0 };
+function resolveFlyCollisions() {
+  const dims = localDims(vehicleMode);
+  if (!dims) return;
+  const mb = bodyFrom(dims, vehicleMode);
+  const rad = Math.max(mb.hw, 1.2);
+  const aLo = car.y + mb.minY;
+  const fx = Math.sin(car.h), fz = Math.cos(car.h);
+  const span = Math.max(0, mb.hd - rad);   // uzun tomoni bo'ylab bir nechta doira bilan tekshiramiz
+  const n = Math.max(1, Math.ceil(span * 2 / (rad * 1.2)) + 1);
+  let impact = 0, ix = 0, iz = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let k = 0; k < n; k++) {
+      const off = n === 1 ? 0 : -span + (k / (n - 1)) * 2 * span;
+      const cx = car.x + fx * off, cz = car.z + fz * off;
+      for (const col of colliders) {
+        const dx = cx - col.x, dz = cz - col.z;
+        const reach = (col.reach2 ? Math.sqrt(col.reach2) : 0) + rad;
+        if (dx * dx + dz * dz > reach * reach) continue;
+        if (aLo >= col.top - 0.3) continue;   // tepasidan uchib o'tyapti
+        let hit;
+        if (col.cone) {
+          _flyCone.x = col.x; _flyCone.z = col.z;
+          _flyCone.r = Math.max(0, col.r * (1 - Math.max(aLo, 0) / col.top));
+          hit = _flyCone.r > 0 ? collideCircle(_flyCone, cx, cz, rad) : null;
+        } else {
+          hit = collideCircle(col, cx, cz, rad);
+        }
+        if (!hit) continue;
+        car.x += hit.nx * hit.pen;
+        car.z += hit.nz * hit.pen;
+        const vn = car.vx * hit.nx + car.vz * hit.nz;
+        if (vn < 0) {
+          if (-vn > impact) { impact = -vn; ix = -hit.nx; iz = -hit.nz; }
+          car.vx -= 1.15 * vn * hit.nx;
+          car.vz -= 1.15 * vn * hit.nz;
+        }
+      }
+    }
+  }
+  reportImpact(ix, iz, impact);
 }
 
 function resolveVehicleCollisions() {
