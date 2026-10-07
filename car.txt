@@ -1,3 +1,18 @@
+name: MERSCEDES
+car: mercedes_190e_evo_1982_3d_model_free-v1.glb
+
+name: PORSCHE
+car: porsche_911_gt3_rs-v2.glb
+
+name: BUGGATI
+car: andrew_tates_bugatti_pur_sport-v1.glb
+
+name: BMW E34
+car: bmw_e34_stance_style-v1.glb
+
+name: BRABUS
+car: brabus_g900_rocket_edition-v2.glb
+
 name: LADA VAZ-2103
 car: lada_vaz-2103_zhiguli-v1.glb
 length: 7
