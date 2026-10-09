@@ -1,12 +1,12 @@
-// DEXO GTA: Firebase ulanishi — Google orqali kirish va Realtime Database.
+// DEXO GTA: Firebase ulanishi — email va parol orqali kirish/ro‘yxatdan o‘tish va Realtime Database.
 // Bu fayl index.js va sign-up.js ikkalasida ham ishlatiladi.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+  getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
   onAuthStateChanged, signOut,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
 import {
-  getDatabase, ref, set, serverTimestamp, onValue, runTransaction, onDisconnect,
+  getDatabase, ref, set, update, serverTimestamp, onValue, runTransaction, onDisconnect,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js';
 
 const firebaseConfig = {
@@ -23,17 +23,6 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getDatabase(app);
-const provider = new GoogleAuthProvider();
-// Hisobdan chiqqandan keyin har doim hisob tanlash oynasi chiqsin — avvalgi hisobga avtomatik qaytmasin,
-// shu bois foydalanuvchi boshqa Google hisobidan kira oladi.
-provider.setCustomParameters({ prompt: 'select_account' });
-
-// Popup ba'zi mobil brauzer/WebView'larda bloklanadi — shunday holatlarda redirect usuliga o'tamiz.
-const REDIRECT_FALLBACK_CODES = new Set([
-  'auth/popup-blocked',
-  'auth/operation-not-supported-in-this-environment',
-  'auth/popup-closed-by-user',
-]);
 
 // Auth holati aniqlanganda (kirgan/kirmagan) chaqiriladi. Obuna bekor qilish funksiyasini qaytaradi.
 export function watchAuth(callback) {
@@ -41,41 +30,47 @@ export function watchAuth(callback) {
 }
 
 // Foydalanuvchi profilini Realtime Database'ga yozadi: users/{uid}
-async function saveProfile(user) {
+// Yangi akkaunt bo'lsa — to'liq profil yaratiladi; avval bor akkaunt bo'lsa — faqat oxirgi kirish vaqti yangilanadi.
+async function saveProfile(user, isNew) {
   if (!user) return;
   try {
-    await set(ref(db, `users/${user.uid}`), {
-      name: user.displayName || '',
-      email: user.email || '',
-      photoURL: user.photoURL || '',
-      lastLogin: serverTimestamp(),
-    });
+    if (isNew) {
+      await set(ref(db, `users/${user.uid}`), {
+        name: user.displayName || '',
+        email: user.email || '',
+        photoURL: user.photoURL || '',
+        createdAt: serverTimestamp(),
+        lastLogin: serverTimestamp(),
+      });
+    } else {
+      await update(ref(db, `users/${user.uid}`), {
+        email: user.email || '',
+        lastLogin: serverTimestamp(),
+      });
+    }
   } catch (err) {
     console.warn('Profilni saqlab bo‘lmadi (Realtime Database qoidalarini tekshiring):', err);
   }
 }
 
-// Google orqali kirish. Popup ishlamasa avtomatik redirect'ga o'tadi (natija null qaytadi —
-// sahifa qayta yuklanganda finishRedirectSignIn orqali tugaydi).
-export async function signInGoogle() {
+// Email + parol orqali BITTA funksiyada ham ro'yxatdan o'tish, ham kirish:
+//  1) avval yangi akkaunt yaratishga urinadi — muvaffaqiyatli bo'lsa { isNew: true };
+//  2) bu email bilan akkaunt allaqachon bor bo'lsa — shu parol bilan kiradi, { isNew: false };
+//  3) parol noto'g'ri bo'lsa — xatolik (auth/invalid-credential) tashlanadi.
+// Bu usul Firebase'ning "email enumeration protection" yoqilgan bo'lsa ham ishlaydi.
+export async function emailAuth(email, password) {
   try {
-    const res = await signInWithPopup(auth, provider);
-    await saveProfile(res.user);
-    return res.user;
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    await saveProfile(cred.user, true);
+    return { user: cred.user, isNew: true };
   } catch (err) {
-    if (err && REDIRECT_FALLBACK_CODES.has(err.code)) {
-      await signInWithRedirect(auth, provider);
-      return null;
+    if (err && err.code === 'auth/email-already-in-use') {
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      await saveProfile(cred.user, false);
+      return { user: cred.user, isNew: false };
     }
     throw err;
   }
-}
-
-// Redirect orqali kirish tugagandan keyin (sahifa qayta yuklanganda) chaqiriladi.
-export async function finishRedirectSignIn() {
-  const res = await getRedirectResult(auth);
-  if (res && res.user) { await saveProfile(res.user); return res.user; }
-  return null;
 }
 
 export function signOutUser() {

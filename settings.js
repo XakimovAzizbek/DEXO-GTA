@@ -49,12 +49,12 @@ document.getElementById('resetSettings').addEventListener('click', () => {
   commit();
 });
 
-// ---------- Hisob: chiqish, boshqa Google hisobidan kirish imkoni ----------
+// ---------- Hisob: chiqish, boshqa hisobdan kirish imkoni ----------
 const accountEmail = document.getElementById('accountEmail');
 const signOutBtn = document.getElementById('signOutBtn');
 
 requireUser().then((user) => {
-  if (user) accountEmail.textContent = user.email || user.displayName || 'Google hisobi';
+  if (user) accountEmail.textContent = user.email || user.displayName || 'Hisob';
   else accountEmail.textContent = 'Kirilmagan';
 });
 
@@ -66,7 +66,7 @@ signOutBtn.addEventListener('click', async () => {
   } catch (err) {
     console.warn('Hisobdan chiqishda xatolik:', err);
   }
-  location.replace('sign-up.html');   // chiqgandan so'ng boshqa Google hisobidan kirish mumkin bo'ladi
+  location.replace('sign-up.html');   // chiqgandan so'ng boshqa email bilan kirish mumkin bo'ladi
 });
 
 render();

@@ -13,20 +13,31 @@
 <body class="authing">
   <main class="stage">
     <h1 class="wordmark">DEXO<br>GTA</h1>
-    <p class="tagline">Davom etish uchun hisobga kiring</p>
+    <p class="tagline">Davom etish uchun email va parolingizni kiriting</p>
 
-    <button type="button" id="googleBtn" class="google-btn">
-      <svg viewBox="0 0 48 48" width="22" height="22" aria-hidden="true">
-        <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.9 32.5 29.4 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z"/>
-        <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 16 18.9 13 24 13c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4c-7.4 0-13.8 4.1-17.1 10.1z"/>
-        <path fill="#4CAF50" d="M24 44c5.4 0 10.3-2.1 14-5.5l-6.5-5.5c-2 1.4-4.6 2.3-7.5 2.3-5.4 0-9.9-3.5-11.4-8.3l-6.6 5c3.3 6.1 9.6 11.9 18 11.9z"/>
-        <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.7 2-2 3.7-3.7 5l6.5 5.5C40.3 36.3 44 30.9 44 24c0-1.2-.1-2.3-.4-3.5z"/>
-      </svg>
-      <span>Google orqali ro‘yxatdan o‘tish</span>
-    </button>
+    <form id="authForm" class="auth-form" novalidate>
+      <label class="field">
+        <span>Email</span>
+        <input type="email" id="email" name="email" autocomplete="email" inputmode="email"
+               autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="misol@gmail.com" required>
+      </label>
 
-    <p class="status" id="status"></p>
-    <p class="error" id="error"></p>
+      <label class="field">
+        <span>Parol</span>
+        <div class="pass-wrap">
+          <input type="password" id="password" name="password" autocomplete="current-password"
+                 minlength="6" placeholder="Kamida 6 ta belgi" required>
+          <button type="button" id="togglePass" class="pass-toggle" aria-label="Parolni ko‘rsatish">Ko‘rsat</button>
+        </div>
+      </label>
+
+      <button type="submit" id="submitBtn" class="submit-btn">Davom etish</button>
+    </form>
+
+    <p class="hint">Hisobingiz bo‘lsa — kirasiz, bo‘lmasa — yangi hisob avtomatik yaratiladi.</p>
+
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <p class="error" id="error" role="alert"></p>
   </main>
   <script type="module" src="sign-up.js"></script>
 </body>
