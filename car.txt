@@ -13,6 +13,8 @@ rotate: 180
 
 name: BMW E34
 car: bmw_e34_stance_style-v1.glb
+length: 7
+rotate: 180
 
 name: BRABUS
 car: brabus_g900_rocket_edition-v2.glb
