@@ -48,6 +48,7 @@
       <button type="button" role="tab" data-tab="camera" class="is-active">Kamera</button>
       <button type="button" role="tab" data-tab="car">Mashina</button>
       <button type="button" role="tab" data-tab="lights">Chiroq</button>
+      <button type="button" role="tab" data-tab="rocket">Raketa</button>
       <button type="button" role="tab" data-tab="test">Sinov</button>
     </div>
 
@@ -86,6 +87,22 @@
           <label class="check"><input type="checkbox" id="pvBrake" checked><span>Tormoz bosilgan</span></label>
           <label class="check"><input type="checkbox" id="pvReverse" checked><span>Orqaga yurish</span></label>
           <label class="check"><input type="checkbox" id="pvButton" checked><span>Chiroq tugmasi bosilgan</span></label>
+        </div>
+      </div>
+
+      <div class="rows" data-tabpanel="rocket" hidden>
+        <button type="button" class="mini ed-rocket-toggle" id="rocketBtn">🚀 Raketa: o‘chiq</button>
+        <div class="rows" id="rocketTools" hidden>
+          <p class="note">Raketani barmoq bilan ushlab chap-o‘ng va tepa-pastga suring (oldi-orqasi uchun slayder bor). Chap tomonga o‘zi aks etadi.</p>
+          <div class="presets">
+            <button type="button" class="mini" data-tilt="90">⬆ Tik</button>
+            <button type="button" class="mini" data-tilt="45">↗ Yonmacha</button>
+            <button type="button" class="mini" data-tilt="0">→ To‘g‘ri</button>
+            <button type="button" class="mini" data-tilt="-45">↘ Pastga yonma</button>
+            <button type="button" class="mini" data-tilt="-90">⬇ Tik pastga</button>
+          </div>
+          <button type="button" class="mini mini--fire" id="rocketFire">🚀 Uchirib ko‘rish (portlash va yer titrashi)</button>
+          <div class="rows" id="rocketRows"></div>
         </div>
       </div>
 

@@ -88,6 +88,16 @@ export const CAR_DEFAULTS = {
   fovspeed: 0.35,
   follow: 8,
   tilt: 1,
+  // --- Raketa (car-editor.html dagi "Raketa" bo'limi) ---
+  rocket: 0,         // 1 = mashinaga raketa o'rnatilgan (o'yinda raketa tugmasi chiqadi)
+  rocketx: 0,        // raketaning o'ng tomondagi joyi (metr); chap tomonga o'zi aks etadi
+  rockety: 0,        // balandligi (metr)
+  rocketz: 0,        // oldi-orqasi (metr, + burun tomon)
+  rocketsize: 2.4,   // raketa uzunligi (metr)
+  rockettilt: 0,     // burchak (daraja): 0 = to'g'ri oldinga, 45 = yonmacha yuqoriga, 90 = tik yuqoriga, -90 = tik pastga
+  rocketpower: 1,    // raketa kuchi: uchish tezligi, yer titrashi va itarish kuchi ko'paytirgichi (0.5 .. 3)
+  rocketblast: 16,   // portlash radiusi (metr): shu masofagacha portlash ta'sir qiladi
+  rocketrange: 0,    // uchish masofasi (metr): shu masofada havoda portlaydi; 0 = hech narsaga tegmaguncha
 };
 const CAR_KEYS = Object.keys(CAR_DEFAULTS);
 

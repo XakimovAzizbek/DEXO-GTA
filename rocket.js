@@ -10,10 +10,13 @@ const MAX_SCORCH = 48;
 const POOL_SIZE = 340;               // bir vaqtda ko'rinadigan tutun/olov/parcha zarralari
 const ROCKET_LIFE = 7;               // soniya: hech narsaga tegmasa, havoda portlaydi
 const ROCKET_BOOST = 140;            // m/s: samolyot tezligiga qo'shiladi
+const BLAST_DEFAULT = 16;            // m: oddiy portlash radiusi (muharrirda rocketblast)
+const _clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 export function createRocketSystem({ scene, camera, groundAt, inBounds, collide, onExplode }) {
   let clock = 0;
   let shake = 0;
+  let shakeDecay = 3;    // kuchli portlashda yer uzoqroq titraydi
   const rockets = [];
   const blasts = [];     // portlash shari / halqasi
   const scorches = [];   // yerdagi kuyindi va devordagi qurum
@@ -140,7 +143,11 @@ export function createRocketSystem({ scene, camera, groundAt, inBounds, collide,
   let flashT = 0;
   const ringGeo = new THREE.RingGeometry(0.82, 1, 44).rotateX(-Math.PI / 2);
 
-  function explode(x, y, z, kind) {
+  // opts: { blast (portlash radiusi, m), power (kuch ko'paytirgichi) } - bermasa oddiy portlash
+  function explode(x, y, z, kind, opts = {}) {
+    const k = _clamp((opts.blast || BLAST_DEFAULT) / BLAST_DEFAULT, 0.35, 4);   // kattalik
+    const pw = _clamp(opts.power || 1, 0.3, 4);                                 // kuch
+    const ks = Math.sqrt(k);
     const g = groundAt(x, z);
     const alt = y - g;
     const cy = Math.max(y, g + 1.5);
@@ -152,56 +159,61 @@ export function createRocketSystem({ scene, camera, groundAt, inBounds, collide,
       scene.add(mesh);
       blasts.push({ mesh, age: 0, life, r, ring: false });
     };
-    mk(0xff9a2e, 8.5, 0.75);
-    mk(0xfff0b0, 4.8, 0.45);
-    if (alt < 14) {                       // yer ustidagi zarba to'lqini
+    mk(0xff9a2e, 8.5 * k, 0.75 * (0.8 + 0.2 * k));
+    mk(0xfff0b0, 4.8 * k, 0.45 * (0.8 + 0.2 * k));
+    if (alt < 14 * k) {                   // yer ustidagi zarba to'lqini
       const mat = new THREE.MeshBasicMaterial({ color: 0xffe2b0, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide });
       const ring = new THREE.Mesh(ringGeo, mat);
       ring.position.set(x, g + 0.15, z);
       scene.add(ring);
-      blasts.push({ mesh: ring, age: 0, life: 0.7, r: 26, ring: true });
+      blasts.push({ mesh: ring, age: 0, life: 0.7 * (0.8 + 0.2 * k), r: 26 * k, ring: true });
     }
 
+    const cnt = Math.min(2, k);           // zarralar soni (hovuz tugab qolmasin)
     // Olov zarralari
-    for (let i = 0; i < 42; i++) {
-      const a = Math.random() * Math.PI * 2, e = (Math.random() * 1.2 - 0.2), sp = 6 + Math.random() * 20;
+    for (let i = 0, n = Math.round(42 * cnt); i < n; i++) {
+      const a = Math.random() * Math.PI * 2, e = (Math.random() * 1.2 - 0.2), sp = (6 + Math.random() * 20) * k;
       puff(x, cy, z, Math.cos(a) * sp, e * sp * 0.8 + 3, Math.sin(a) * sp,
-        0.5 + Math.random() * 0.7, 1 + Math.random(), 3 + Math.random() * 2.5, 0.95, 0xffe08a, 0xff4a10, -3, 1.4);
+        0.5 + Math.random() * 0.7, (1 + Math.random()) * k, (3 + Math.random() * 2.5) * k, 0.95, 0xffe08a, 0xff4a10, -3, 1.4);
     }
     // Parchalar (qora, og'ir - pastga tushadi)
-    for (let i = 0; i < 22; i++) {
-      const a = Math.random() * Math.PI * 2, sp = 12 + Math.random() * 28;
-      puff(x, cy, z, Math.cos(a) * sp, 10 + Math.random() * 22, Math.sin(a) * sp,
-        1.2 + Math.random() * 1.2, 0.25 + Math.random() * 0.3, 0.2, 1, 0x2a2623, 0x0d0c0b, 26, 0.3);
+    for (let i = 0, n = Math.round(22 * cnt); i < n; i++) {
+      const a = Math.random() * Math.PI * 2, sp = (12 + Math.random() * 28) * ks;
+      puff(x, cy, z, Math.cos(a) * sp, (10 + Math.random() * 22) * ks, Math.sin(a) * sp,
+        1.2 + Math.random() * 1.2, (0.25 + Math.random() * 0.3) * ks, 0.2 * ks, 1, 0x2a2623, 0x0d0c0b, 26, 0.3);
     }
     // Qora tutun ustuni
-    for (let i = 0; i < 20; i++) {
-      puff(x + (Math.random() - 0.5) * 5, cy + Math.random() * 2, z + (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 3, 3 + Math.random() * 6, (Math.random() - 0.5) * 3,
-        5 + Math.random() * 3.5, 2.4, 10 + Math.random() * 3, 0.6, 0x5d5853, 0x1b1a19, 0, 0.35);
+    for (let i = 0, n = Math.round(20 * cnt); i < n; i++) {
+      puff(x + (Math.random() - 0.5) * 5 * k, cy + Math.random() * 2, z + (Math.random() - 0.5) * 5 * k,
+        (Math.random() - 0.5) * 3, (3 + Math.random() * 6) * ks, (Math.random() - 0.5) * 3,
+        5 + Math.random() * 3.5, 2.4 * k, (10 + Math.random() * 3) * k, 0.6, 0x5d5853, 0x1b1a19, 0, 0.35);
     }
-    if (alt < 6) {                         // chang-tuproq halqasi
-      for (let i = 0; i < 16; i++) {
-        const a = (i / 16) * Math.PI * 2 + Math.random() * 0.3, sp = 10 + Math.random() * 9;
+    if (alt < 6 * k) {                     // chang-tuproq halqasi
+      for (let i = 0, n = Math.round(16 * cnt); i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + Math.random() * 0.3, sp = (10 + Math.random() * 9) * k;
         puff(x, g + 0.8, z, Math.cos(a) * sp, 1.5 + Math.random() * 2, Math.sin(a) * sp,
-          1.3, 1.5, 5, 0.65, 0x9b8462, 0x5e5240, 0, 1.6);
+          1.3, 1.5 * k, 5 * k, 0.65, 0x9b8462, 0x5e5240, 0, 1.6);
       }
     }
 
     // Yorug'lik chaqnashi
     flash.position.set(x, Math.max(y, g + 4), z);
+    flash.distance = 140 * Math.max(1, k);
     flashT = 0.5;
 
-    // Kamera silkinishi (yaqin bo'lsa kuchli)
+    // Yer titrashi (kamera silkinishi): kuch va radius qancha katta bo'lsa, shuncha kuchli va uzoq, shuncha uzoqqa yetadi
     const d = camera.position.distanceTo(new THREE.Vector3(x, y, z));
-    shake = Math.max(shake, Math.min(2.4, 2.6 * (1 - d / 110)));
+    const reach = 110 * k;
+    const cap = Math.min(7, 2.4 * pw * ks);
+    shake = Math.max(shake, Math.min(cap, 2.6 * pw * ks * (1 - d / reach)));
+    shakeDecay = 3 / Math.max(1, ks * Math.sqrt(pw));
 
     // Kuyindi: yerga tegsa katta dog'; devorga tegsa - qurum + pastida dog'
     if (kind === 'wall' && alt > 1.8) {
-      addBlob(x, y, z, 3.4);
-      if (alt < 30) addScorch(x, z, 5.5);
-    } else if (alt < 4) {
-      addScorch(x, z, kind === 'ground' ? 9 : 7);
+      addBlob(x, y, z, 3.4 * k);
+      if (alt < 30) addScorch(x, z, 5.5 * k);
+    } else if (alt < 4 * Math.max(1, k)) {
+      addScorch(x, z, (kind === 'ground' ? 9 : 7) * k);
     }
   }
 
@@ -238,7 +250,14 @@ export function createRocketSystem({ scene, camera, groundAt, inBounds, collide,
       mesh, x: spec.x, y: spec.y, z: spec.z, h: spec.h || 0, pitch: spec.pitch || 0,
       v0: Math.max(0, spec.v0 || 0), size: spec.size || 2.4, age: 0, trail: 0,
       mine: !!spec.mine, owner: spec.owner || null,
+      power: _clamp(Number(spec.power) || 1, 0.3, 4),                 // kuch ko'paytirgichi
+      blast: _clamp(Number(spec.blast) || BLAST_DEFAULT, 3, 80),      // portlash radiusi (m)
+      infinite: !!spec.infinite,                                      // true = masofa/vaqt/chegara cheklovi yo'q: nimagadir tegmaguncha uchadi
+      heavy: !!spec.heavy,                                            // true = mashinalarni oddiydan ham kuchli pachoqlaydi
+      range: spec.infinite ? 0 : (Number(spec.range) > 0 ? Number(spec.range) : 0),   // uchish masofasi (m), 0 = cheklanmagan (faqat vaqt bilan)
+      travel: 0,
     };
+    r.life = r.infinite ? 180 : r.range ? Math.max(ROCKET_LIFE, r.range / (ROCKET_BOOST * r.power) * 1.5 + 1) : ROCKET_LIFE;
     rockets.push(r);
     // Chiqish paytidagi tutun
     for (let i = 0; i < 8; i++) {
@@ -252,7 +271,7 @@ export function createRocketSystem({ scene, camera, groundAt, inBounds, collide,
     for (let i = rockets.length - 1; i >= 0; i--) {
       const r = rockets[i];
       r.age += dt;
-      const speed = r.v0 + ROCKET_BOOST * Math.min(1, r.age / 0.4);
+      const speed = r.v0 + ROCKET_BOOST * r.power * Math.min(1, r.age / 0.4);
       const cp = Math.cos(r.pitch);
       const dx = Math.sin(r.h) * cp, dy = -Math.sin(r.pitch), dz = Math.cos(r.h) * cp;
       const dist = speed * dt;
@@ -261,15 +280,17 @@ export function createRocketSystem({ scene, camera, groundAt, inBounds, collide,
       let boom = null;
       for (let k = 0; k < n; k++) {
         r.x += sx; r.y += sy; r.z += sz;
-        if (!inBounds(r.x, r.z)) { boom = { x: r.x, y: r.y, z: r.z, kind: 'air' }; break; }
+        r.travel += dist / n;
+        if (r.range && r.travel >= r.range) { boom = { x: r.x, y: r.y, z: r.z, kind: 'air' }; break; }   // belgilangan masofada portlaydi
+        if (!r.infinite && !inBounds(r.x, r.z)) { boom = { x: r.x, y: r.y, z: r.z, kind: 'air' }; break; }
         const hit = collide(r.x, r.y, r.z, r);
         if (hit) { boom = hit; break; }
       }
-      if (!boom && r.age >= ROCKET_LIFE) boom = { x: r.x, y: r.y, z: r.z, kind: 'air' };
+      if (!boom && r.age >= r.life) boom = { x: r.x, y: r.y, z: r.z, kind: 'air' };
       if (boom) {
         scene.remove(r.mesh);
         rockets.splice(i, 1);
-        explode(boom.x, boom.y, boom.z, boom.kind);
+        explode(boom.x, boom.y, boom.z, boom.kind, { blast: r.blast, power: r.power });
         onExplode(boom, r);
         continue;
       }
@@ -293,7 +314,7 @@ export function createRocketSystem({ scene, camera, groundAt, inBounds, collide,
     updateBlasts(dt);
     updateParticles(dt);
     updateScorches();
-    shake *= Math.exp(-3 * dt);
+    shake *= Math.exp(-shakeDecay * dt);
   }
 
   // Kamera silkinishi: har freymda kamera joylangandan KEYIN chaqiriladi.

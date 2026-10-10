@@ -5,8 +5,9 @@ import {
   LIGHT_SHAPES, LIGHT_FUNCS, LIGHT_FUNC_DEFAULTS, MAX_LIGHTS, normalizeLight,
 } from './data.js';
 import {
-  getGeometry, getMaterial, makeEnvironment, loadCarScene, fitCarModel, disposeModel,
+  getGeometry, getMaterial, makeEnvironment, loadCarScene, fitCarModel, disposeModel, buildRocketModel,
 } from './models.js';
+import { createRocketSystem } from './rocket.js';
 import { showSaveDialog } from './savefile.js';
 import { createCarLights } from './lights.js';
 
@@ -100,14 +101,23 @@ const CONTROLS = [
   { tab: 'camera', key: 'fov', label: 'Ko‘rish burchagi', min: 40, max: 90, step: 1, unit: '°' },
   { tab: 'camera', key: 'fovspeed', label: 'Tezlikda kengayish', min: 0, max: 0.8, step: 0.05, unit: '' },
   { tab: 'camera', key: 'follow', label: 'Kamera ergashishi', min: 2, max: 20, step: 0.5, unit: '' },
-  { tab: 'car', key: 'length', label: 'Mashina kattaligi (uzunligi)', min: 3, max: 7, step: 0.1, unit: 'm' },
+  { tab: 'car', key: 'length', label: 'Mashina kattaligi (uzunligi)', min: 3, max: 20, step: 0.1, unit: 'm' },
   { tab: 'car', key: 'lift', label: 'Yerdan balandligi', min: -0.5, max: 0.5, step: 0.02, unit: 'm' },
   { tab: 'car', key: 'tilt', label: 'Engashish kuchi', min: 0, max: 2.5, step: 0.1, unit: '' },
+  { tab: 'rocket', key: 'rocketx', label: 'Joyi: chapga ↔ o‘ngga (juft bo‘lib aks etadi)', min: -5, max: 5, step: 0.05, unit: 'm' },
+  { tab: 'rocket', key: 'rockety', label: 'Joyi: balandligi', min: 0, max: 8, step: 0.05, unit: 'm' },
+  { tab: 'rocket', key: 'rocketz', label: 'Joyi: orqaga ↔ oldinga', min: -14, max: 14, step: 0.05, unit: 'm' },
+  { tab: 'rocket', key: 'rockettilt', label: 'Burchagi (90 = tik yuqoriga, 0 = to‘g‘ri, −90 = pastga)', min: -90, max: 90, step: 5, unit: '°' },
+  { tab: 'rocket', key: 'rocketsize', label: 'Raketa uzunligi', min: 0.6, max: 8, step: 0.2, unit: 'm' },
+  { tab: 'rocket', key: 'rocketpower', label: 'Raketa kuchi (tezlik, yer titrashi, itarish)', min: 0.5, max: 3, step: 0.1, unit: '×' },
+  { tab: 'rocket', key: 'rocketblast', label: 'Portlash radiusi (necha metrgacha ta’sir qiladi)', min: 4, max: 60, step: 1, unit: 'm' },
+  { tab: 'rocket', key: 'rocketrange', label: 'Uchish masofasi (shu yerda havoda portlaydi)', min: 0, max: 1500, step: 25, unit: 'm', zero: 'cheksiz' },
   { tab: 'test', key: 'testSpeed', label: 'Sinov tezligi (faqat ko‘rish uchun)', min: 0, max: 150, step: 5, unit: 'km/soat', test: true },
 ];
 const rows = new Map();   // key -> { def, input, output }
 
 const fmt = (def, v) => {
+  if (def.zero && Number(v) === 0) return def.zero;
   const digits = def.step < 0.1 ? 2 : def.step < 1 ? 1 : 0;
   return `${Number(v).toFixed(digits)}${def.unit ? ' ' + def.unit : ''}`;
 };
@@ -147,7 +157,7 @@ function buildRow(def) {
   plus.addEventListener('click', () => nudge(1));
 
   rows.set(def.key, { def, input, output });
-  const panel = document.querySelector(`[data-tabpanel="${def.tab}"]`);
+  const panel = def.tab === 'rocket' ? $('rocketRows') : document.querySelector(`[data-tabpanel="${def.tab}"]`);
   const flip = panel.querySelector('#flipRow');
   if (flip) panel.insertBefore(row, flip);          // "Mashina" paneli: "oldi/orqa" qatoridan oldin
   else if (def.tab === 'test') panel.prepend(row);  // "Sinov" paneli: eng tepada
@@ -162,6 +172,7 @@ function syncControls() {
     output.textContent = fmt(def, v);
   }
   updateFlipLabels();
+  updateRocketUI();
 }
 
 // Oldi/orqa almashtirish holatini ikkala tugmada ko'rsatadi
@@ -172,11 +183,15 @@ function updateFlipLabels() {
 }
 
 function setValue(def, v) {
+  const prevLength = profile.length;
   if (def.test) test.speedKmh = v; else profile[def.key] = v;
   const r = rows.get(def.key);
   r.input.value = v;
   r.output.textContent = fmt(def, v);
   if (def.key === 'length' || def.key === 'lift') { refit(); rebuildLights(); }
+  if (def.key === 'length') scaleRocketSpot(v / prevLength);   // mashina kattalashsa raketa o'z joyida qolsin
+  else if (def.key === 'rocketsize' || (def.key === 'rocketx' && rocketMeshes.length !== wantedRocketCount())) buildRockets();
+  else if (def.key.startsWith('rocket')) placeRockets();
   if (!def.test) saveDraftSoon();
 }
 
@@ -208,6 +223,7 @@ $('reset').addEventListener('click', () => {
   Object.assign(profile, CAR_DEFAULTS);
   syncControls();
   refit();
+  buildRockets();
   saveDraftSoon();
 });
 
@@ -350,6 +366,173 @@ function refit() {
   carTilt.add(fitted);
 }
 
+// ---------- Raketa: qo'lda surish, burchak, kuch, portlash ----------
+// Raketa mashina modeliga emas, carTilt ga qo'shiladi (mashina bilan birga engashadi). O'yinda ham xuddi shunday.
+let rocketMeshes = [];   // [o'ng raketa, chap (aks etgan) raketa]
+let rocketNext = 0, rocketReadyAt = 0;
+const wantedRocketCount = () => (Math.abs(profile.rocketx) > 0.05 ? 2 : 1);
+
+function clearRockets() {
+  for (const g of rocketMeshes) {
+    carTilt.remove(g);
+    g.traverse((o) => { if (o.userData.handle) { o.geometry.dispose(); o.material.dispose(); } });   // faqat ko'rinmas tutqich (raketa qismlari umumiy)
+  }
+  rocketMeshes = [];
+}
+function addRocketMesh(mirror) {
+  const g = new THREE.Group();
+  g.userData.mirror = mirror;
+  g.add(buildRocketModel(profile.rocketsize));
+  const hit = new THREE.Mesh(                       // ko'rinmas katta "tutqich" - barmoq bilan ushlash oson bo'lsin
+    new THREE.SphereGeometry(Math.max(0.7, profile.rocketsize * 0.6), 12, 8),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  hit.userData.handle = true;
+  g.add(hit);
+  carTilt.add(g);
+  rocketMeshes.push(g);
+}
+function placeRockets() {
+  const t = -clamp(profile.rockettilt, -90, 90) * Math.PI / 180;   // + yuqoriga: burun yuqoriga ko'tariladi
+  for (const g of rocketMeshes) {
+    g.position.set(g.userData.mirror ? -profile.rocketx : profile.rocketx, profile.rockety, profile.rocketz);
+    g.rotation.x = t;
+  }
+}
+function buildRockets() {
+  clearRockets();
+  if (!Number(profile.rocket)) return;
+  addRocketMesh(false);
+  if (wantedRocketCount() === 2) addRocketMesh(true);
+  placeRockets();
+}
+function rocketDefaultSpot() {                      // birinchi yoqilganda: tomning ikki yoniga taxminan
+  const box = fitted ? new THREE.Box3().setFromObject(fitted) : null;
+  if (box && !box.isEmpty()) {
+    const w = box.max.x - box.min.x;
+    profile.rocketx = Math.round(w * 0.22 * 20) / 20;
+    profile.rockety = Math.round((box.max.y + 0.1) * 20) / 20;
+  } else {                                          // model hali yuklanmagan bo'lsa
+    profile.rocketx = 0.5;
+    profile.rockety = 1.8;
+  }
+  profile.rocketz = 0;
+  profile.rockettilt = 45;                          // yonmacha yuqoriga
+}
+function scaleRocketSpot(k) {
+  if (!Number.isFinite(k) || k <= 0 || k === 1) return;
+  const r2 = (v) => Math.round(v * k * 100) / 100;
+  profile.rocketx = clamp(r2(profile.rocketx), -5, 5);
+  profile.rockety = clamp(r2(profile.rockety), 0, 8);
+  profile.rocketz = clamp(r2(profile.rocketz), -14, 14);
+  for (const key of ['rocketx', 'rockety', 'rocketz']) {
+    const row = rows.get(key);
+    row.input.value = profile[key];
+    row.output.textContent = fmt(row.def, profile[key]);
+  }
+  buildRockets();
+}
+function updateRocketUI() {
+  const on = !!Number(profile.rocket);
+  $('rocketBtn').textContent = on ? '🚀 Raketa: yoqilgan' : '🚀 Raketa: o‘chiq';
+  $('rocketBtn').classList.toggle('is-on', on);
+  $('rocketTools').hidden = !on;
+}
+$('rocketBtn').addEventListener('click', () => {
+  profile.rocket = Number(profile.rocket) ? 0 : 1;
+  if (profile.rocket && !profile.rocketx && !profile.rockety && !profile.rocketz) rocketDefaultSpot();
+  syncControls();
+  buildRockets();
+  saveDraftSoon();
+});
+document.querySelectorAll('[data-tilt]').forEach((b) => b.addEventListener('click', () => {
+  if (!Number(profile.rocket)) return;
+  setValue(rows.get('rockettilt').def, Number(b.dataset.tilt));
+}));
+
+// Barmoq bilan surish: mashinaning chap-o'ng va tepa-past tomoniga (oldi-orqasi uchun slayder bor)
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const _plane = new THREE.Plane(), _n = new THREE.Vector3(), _wp = new THREE.Vector3(), _hp = new THREE.Vector3();
+let drag = null;
+function aimRay(e) {
+  ndc.set(((e.clientX - rect.x) / rect.w) * 2 - 1, -((e.clientY - rect.y) / rect.h) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+}
+function dragSet(key, v) {
+  profile[key] = v;
+  const row = rows.get(key);
+  row.input.value = v;
+  row.output.textContent = fmt(row.def, v);
+}
+const stageEl = $('stage');
+stageEl.addEventListener('pointerdown', (e) => {
+  if (!rocketMeshes.length) return;
+  aimRay(e);
+  const hit = raycaster.intersectObjects(rocketMeshes, true)[0];
+  if (!hit) return;
+  let top = hit.object;
+  while (top && !rocketMeshes.includes(top)) top = top.parent;
+  if (!top) return;
+  carRoot.updateMatrixWorld(true);
+  _n.set(0, 0, 1).transformDirection(carRoot.matrixWorld);       // mashina oldi-orqasiga perpendikulyar tekislik
+  top.getWorldPosition(_wp);
+  _plane.setFromNormalAndCoplanarPoint(_n, _wp);
+  drag = { top, plane: _plane.clone(), offset: hit.point.clone().sub(_wp) };
+  try { stageEl.setPointerCapture(e.pointerId); } catch { /* ok */ }
+  e.preventDefault();
+});
+stageEl.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  aimRay(e);
+  if (!raycaster.ray.intersectPlane(drag.plane, _hp)) return;
+  _hp.sub(drag.offset);
+  carTilt.worldToLocal(_hp);
+  const q = (v) => Math.round(v * 20) / 20;                      // 5 sm qadam
+  const dx = rows.get('rocketx').def, dy = rows.get('rockety').def;
+  dragSet('rocketx', clamp(q(drag.top.userData.mirror ? -_hp.x : _hp.x), dx.min, dx.max));
+  dragSet('rockety', clamp(q(_hp.y), dy.min, dy.max));
+  placeRockets();
+  saveDraftSoon();
+});
+function endDrag() {
+  if (!drag) return;
+  drag = null;
+  buildRockets();                                                // o'ng-chap juftligi o'zgargan bo'lishi mumkin
+}
+stageEl.addEventListener('pointerup', endDrag);
+stageEl.addEventListener('pointercancel', endDrag);
+
+// Sinov uchirish: o'yindagi raketa tizimining o'zi (portlash, tutun, yer titrashi). Muharrirda hech narsaga tegmasa
+// tez ko'rinishi uchun uchish masofasi 60 m bilan cheklanadi (o'yinda belgilangan masofa ishlaydi).
+const TEST_RANGE = 60;
+const rocketSystem = createRocketSystem({
+  scene, camera,
+  groundAt: () => 0,
+  inBounds: (x, z) => Math.abs(x) < 1500 && Math.abs(z) < 1500,
+  collide: (x, y, z) => (y <= 0.05 ? { x, y: 0, z, kind: 'ground' } : null),
+  onExplode: () => {},
+});
+const _rw = new THREE.Vector3();
+$('rocketFire').addEventListener('click', () => {
+  if (!rocketMeshes.length) return;
+  const now = performance.now();
+  if (now < rocketReadyAt) return;
+  rocketReadyAt = now + 1600;
+  const mesh = rocketMeshes[rocketNext++ % rocketMeshes.length];
+  carRoot.updateMatrixWorld(true);
+  mesh.getWorldPosition(_rw);
+  const range = profile.rocketrange > 0 ? Math.min(profile.rocketrange, TEST_RANGE) : TEST_RANGE;
+  rocketSystem.fire({
+    x: _rw.x, y: Math.max(_rw.y, 0.9), z: _rw.z, h: carRoot.rotation.y, v0: 0,
+    pitch: -clamp(profile.rockettilt, -90, 90) * Math.PI / 180,
+    size: profile.rocketsize, power: profile.rocketpower, blast: profile.rocketblast, range, mine: true,
+  });
+  mesh.visible = false;
+  setTimeout(() => { mesh.visible = true; }, 1600);
+  if (profile.rocketrange <= 0 || profile.rocketrange > TEST_RANGE) toast(`Sinovda ${TEST_RANGE} m da portlaydi`, 1600);
+});
+
 async function selectCar(entry) {
   const token = ++loadToken;
   carEntry = entry;
@@ -360,6 +543,7 @@ async function selectCar(entry) {
   rebuildLights();
   renderLightUI();
   syncControls();
+  buildRockets();
   document.querySelectorAll('#cars .chip').forEach((c) => c.classList.toggle('is-active', c.dataset.name === entry.name));
 
   if (fitted) { carTilt.remove(fitted); fitted = null; }
@@ -461,6 +645,8 @@ renderer.setAnimationLoop((now) => {
   else camera.position.copy(desired);
   camera.lookAt(pose.lx, pose.ly, pose.lz);
   camera.fov = pose.fov;
+  rocketSystem.update(dt);
+  rocketSystem.applyShake();   // portlashda yer titraydi (kamera silkinadi)
 
   const rollTarget = clamp(-steer * clamp(speed / 20, 0, 1) * 0.05, -0.05, 0.05) * profile.tilt;
   roll += (rollTarget - roll) * Math.min(1, dt * 6);

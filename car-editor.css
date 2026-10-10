@@ -26,7 +26,7 @@ body {
 .bar-btn--hazard { background: var(--hazard); border-color: var(--hazard); color: #14171d; }
 
 /* O'yin ekrani ko'rinadigan joy */
-.stage { position: relative; z-index: 1; flex: 1; min-height: 0; }
+.stage { position: relative; z-index: 1; flex: 1; min-height: 0; touch-action: none; }
 .frame {
   position: fixed; pointer-events: none;
   border: 2px solid var(--hazard);
@@ -63,7 +63,7 @@ body {
 .fold--flip { border-color: var(--hazard); white-space: nowrap; }
 .fold--flip.is-flipped { background: var(--hazard); color: #14171d; }
 
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+.tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; }
 .tabs button {
   min-height: 42px; border: 2px solid var(--asphalt-line); border-radius: 10px;
   background: var(--asphalt-raise); font-weight: 600;
@@ -146,3 +146,11 @@ body {
 .custom-color { display: flex; align-items: center; gap: 10px; font-size: 14px; }
 .custom-color input { width: 56px; height: 38px; padding: 0; border: 2px solid var(--kerb); border-radius: 8px; background: transparent; }
 .preview { display: grid; gap: 8px; }
+
+/* Raketa bo'limi */
+.tabs button { padding: 0 4px; font-size: 14px; }
+.mini.is-on { border-color: var(--hazard); background: rgba(255, 201, 51, 0.14); }
+.mini--fire { border-color: var(--siren); color: #ffb4a8; }
+.presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 6px; }
+.presets .mini { min-height: 40px; padding: 0 8px; font-size: 14px; }
+#rocketTools[hidden] { display: none; }

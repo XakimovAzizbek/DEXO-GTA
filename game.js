@@ -509,6 +509,7 @@ async function setupCar(setText, setProgress) {
       built.group.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
       carGroup.add(built.group);
       carModel = built;
+      setupRocketMounts('car', entry);   // car muharririda qo'yilgan raketa
       return;
     } catch (err) {
       console.warn('Mashina modeli yuklanmadi:', err);
@@ -961,6 +962,7 @@ addEventListener('keydown', (e) => {
   else if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
   else if (e.code === 'KeyF') { if (!e.repeat) fireRocket(); }
+  else if (e.code === 'KeyG') { if (!e.repeat && rocketMounts[vehicleMode]) toggleAim(); }
   else if (e.code === 'KeyL') toggleLights();
   else if (e.code === 'KeyV') setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
   else if (e.code === 'Escape') setPaused(!paused);
@@ -1517,7 +1519,7 @@ function syncRemoteDents(entry, allowSound) {
 // (pachoq ro'yxati avvalgidek `cr` orqali hammaga ko'rinadi).
 const ROCKET_COOLDOWN = 1.6;                                  // soniya: ikki raketa orasidagi vaqt
 const ROCKET_BTN_POS = { right: '16px', bottom: '250px' };    // tugma joyi (kerak bo'lsa o'zgartiring)
-const rocketMounts = { heli: null, plane: null };             // { meshes, next, size, reloadAt }
+const rocketMounts = { car: null, heli: null, plane: null };   // { meshes, next, size, reloadAt, tilt, power, blast, range }
 let rocketReadyAt = 0, rocketSeq = 0, lastRocketCode = null, rocketBtnReady = true;
 const _rw = new THREE.Vector3();
 const _rcone = { shape: 'circle', x: 0, z: 0, r: 0 };
@@ -1552,25 +1554,115 @@ rocketBtn.addEventListener('pointerleave', rocketBtnUp);
 rocketBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 document.body.appendChild(rocketBtn);
 
+// "+" tugmasi: bosilsa ekran o'rtasida mo'ljal (+) chiqadi va raketa shu mo'ljal qaratilgan joyga to'g'ri uchadi.
+// Yana bosilsa mo'ljal o'chadi va raketa o'zi qaragan tomonga (muharrirdagi burchak bilan) uchadi.
+let aimOn = false;
+const aimBtn = document.createElement('button');
+aimBtn.type = 'button';
+aimBtn.setAttribute('aria-label', 'Mo\'ljal');
+aimBtn.textContent = '+';
+Object.assign(aimBtn.style, {
+  position: 'fixed', right: `${parseInt(ROCKET_BTN_POS.right, 10) + 66 + 10}px`, bottom: `${parseInt(ROCKET_BTN_POS.bottom, 10) + 6}px`,
+  zIndex: 31, display: 'none', width: '54px', height: '54px', borderRadius: '50%', border: '2px solid rgba(255,255,255,.55)',
+  background: 'rgba(30,34,42,.78)', color: '#fff', font: '700 34px/1 sans-serif', alignItems: 'center', justifyContent: 'center',
+  padding: 0, cursor: 'pointer', touchAction: 'none', userSelect: 'none', webkitUserSelect: 'none', transition: 'background .15s, color .15s, transform .08s',
+});
+aimBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  toggleAim();
+});
+aimBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+document.body.appendChild(aimBtn);
+
+const aimPos = { x: 0.5, y: 0.5 };                    // mo'ljalning ekrandagi joyi (0..1), boshida ekran o'rtasi
+const aimCross = document.createElement('div');       // mo'ljal: barmoq bilan ushlab xohlagan joyga surish mumkin (yotiq sahna - stageEl ichida)
+Object.assign(aimCross.style, { position: 'fixed', left: '50%', top: '50%', width: '0', height: '0', zIndex: 29, display: 'none', pointerEvents: 'none' });
+const aimGrab = document.createElement('div');        // ko'rinmas katta tutqich - barmoq bilan ushlash oson bo'lsin
+Object.assign(aimGrab.style, {
+  position: 'absolute', left: '-36px', top: '-36px', width: '72px', height: '72px', borderRadius: '50%',
+  pointerEvents: 'auto', touchAction: 'none', cursor: 'grab',
+});
+aimCross.appendChild(aimGrab);
+for (const [w, h] of [[26, 3], [3, 26]]) {
+  const bar = document.createElement('div');
+  Object.assign(bar.style, {
+    position: 'absolute', left: `${-w / 2}px`, top: `${-h / 2}px`, width: `${w}px`, height: `${h}px`,
+    background: '#ff3b2f', borderRadius: '2px', boxShadow: '0 0 0 1.5px rgba(255,255,255,.85), 0 0 6px rgba(0,0,0,.6)',
+  });
+  aimCross.appendChild(bar);
+}
+stageEl.appendChild(aimCross);   // sahna (yotiq burilgan bo'lsa ham) bilan birga buriladi - mo'ljal joyi sahna koordinatasida
+
+// Ekranning haqiqiy (portret) nuqtasini sahna (yotiq ko'rinish) koordinatasiga aylantiradi - applyLayout() dagi transform teskarisi.
+function toStagePoint(cx, cy) {
+  if (!rotated) return { x: cx, y: cy, w: innerWidth, h: innerHeight };
+  if (settings.landscapeSide === 'ccw') return { x: innerHeight - cy, y: cx, w: innerHeight, h: innerWidth };
+  return { x: cy, y: innerWidth - cx, w: innerHeight, h: innerWidth };
+}
+
+function placeAim() {
+  aimPos.x = clamp(aimPos.x, 0.03, 0.97);
+  aimPos.y = clamp(aimPos.y, 0.05, 0.95);
+  aimCross.style.left = `${aimPos.x * 100}%`;
+  aimCross.style.top = `${aimPos.y * 100}%`;
+}
+let aimDragId = null;
+aimGrab.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  aimDragId = e.pointerId;
+  try { aimGrab.setPointerCapture(e.pointerId); } catch { /* ok */ }
+});
+aimGrab.addEventListener('pointermove', (e) => {
+  if (aimDragId !== e.pointerId) return;
+  e.preventDefault();
+  const sp = toStagePoint(e.clientX, e.clientY);
+  aimPos.x = sp.x / sp.w;
+  aimPos.y = sp.y / sp.h;
+  placeAim();
+});
+const aimDragEnd = (e) => { if (aimDragId === e.pointerId) aimDragId = null; };
+aimGrab.addEventListener('pointerup', aimDragEnd);
+aimGrab.addEventListener('pointercancel', aimDragEnd);
+aimGrab.addEventListener('dblclick', () => { aimPos.x = 0.5; aimPos.y = 0.5; placeAim(); });   // ikki marta bosilsa o'rtaga qaytadi
+aimGrab.addEventListener('contextmenu', (e) => e.preventDefault());
+
+function toggleAim() {
+  aimOn = !aimOn;
+  aimBtn.style.background = aimOn ? 'rgba(255,201,51,.92)' : 'rgba(30,34,42,.78)';
+  aimBtn.style.color = aimOn ? '#14171d' : '#fff';
+  updateRocketBtn();
+}
+
 function updateRocketBtn() {
-  rocketBtn.style.display = vehicleMode !== 'car' && rocketMounts[vehicleMode] ? 'flex' : 'none';
+  const has = !!rocketMounts[vehicleMode];
+  rocketBtn.style.display = has ? 'flex' : 'none';
+  aimBtn.style.display = has ? 'flex' : 'none';
+  aimCross.style.display = has && aimOn ? 'block' : 'none';
 }
 
 // airport.txt dagi sozlamaga ko'ra raketalarni ulov guruhiga (modelga emas - pachoqlanmasin) o'rnatadi.
 function setupRocketMounts(mode, profile) {
   if (!profile || !Number(profile.rocket)) return;
-  const group = mode === 'heli' ? heliGroup : planeGroup;
+  const group = mode === 'car' ? carGroup : mode === 'heli' ? heliGroup : planeGroup;
   const size = clamp(Number(profile.rocketsize) || 2.4, 0.6, 8);
   const rx = Number(profile.rocketx) || 0, ry = Number(profile.rockety) || 0, rz = Number(profile.rocketz) || 0;
+  const tilt = clamp(Number(profile.rockettilt) || 0, -90, 90) * Math.PI / 180;   // + yuqoriga, - pastga (radian)
+  const power = clamp(Number(profile.rocketpower) || 1, 0.3, 4);
+  const blast = clamp(Number(profile.rocketblast) || 16, 3, 80);
+  const range = Math.max(0, Number(profile.rocketrange) || 0);
+  if (rocketMounts[mode]) for (const old of rocketMounts[mode].meshes) group.remove(old);   // qayta o'rnatilsa eskisi qolmasin
   const meshes = [];
   for (const sx of (Math.abs(rx) > 0.05 ? [1, -1] : [1])) {
     const m = buildRocketModel(size);
     m.position.set(sx * rx, ry, rz);
+    m.rotation.x = -tilt;                 // burni tilt burchagiga qarab yuqoriga/pastga buriladi
     m.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
     group.add(m);
     meshes.push(m);
   }
-  rocketMounts[mode] = { meshes, next: 0, size, reloadAt: meshes.map(() => 0) };
+  rocketMounts[mode] = { meshes, next: 0, size, tilt, power, blast, range, heavy: mode === 'car', reloadAt: meshes.map(() => 0) };
   updateRocketBtn();
 }
 
@@ -1587,6 +1679,23 @@ function updateRocketMounts(now) {
   }
 }
 
+// Mo'ljal (+) turgan ekran nuqtasidan chiqqan nur birinchi nimaga tegishini topadi: yer, bino, bot yoki boshqa o'yinchi.
+// Hech narsaga tegmasa (osmon) - 600 m naridagi nuqta olinadi.
+const _aimO = new THREE.Vector3(), _aimD = new THREE.Vector3(), _aimR = { mine: true, owner: null };
+function aimTarget() {
+  camera.updateMatrixWorld();
+  camera.updateProjectionMatrix();
+  camera.getWorldPosition(_aimO);
+  _aimD.set(aimPos.x * 2 - 1, -(aimPos.y * 2 - 1), 0.5).unproject(camera).sub(_aimO).normalize();   // mo'ljal turgan ekran nuqtasi orqali nur
+  const MAX = 600;
+  for (let t = 4; t <= MAX; t += 1.5) {
+    const x = _aimO.x + _aimD.x * t, y = _aimO.y + _aimD.y * t, z = _aimO.z + _aimD.z * t;
+    const hit = rocketCollide(x, y, z, _aimR);
+    if (hit) return { x: hit.x, y: hit.y, z: hit.z };
+  }
+  return { x: _aimO.x + _aimD.x * MAX, y: _aimO.y + _aimD.y * MAX, z: _aimO.z + _aimD.z * MAX };
+}
+
 function fireRocket() {
   const m = rocketMounts[vehicleMode];
   if (!m || paused) return;
@@ -1599,22 +1708,40 @@ function fireRocket() {
   carRoot.updateMatrixWorld(true);
   mesh.getWorldPosition(_rw);
   const ground = ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0;
-  const pitch = car.y - ground > 3 ? 0.05 : 0;                 // havodan uchirilsa biroz pastga qarab uchadi (yerga yetib borishi uchun)
+  const basePitch = car.y - ground > 3 ? 0.05 : 0;             // havodan uchirilsa biroz pastga qarab uchadi (yerga yetib borishi uchun)
+  let pitch = m.tilt ? -m.tilt : basePitch;                    // muharrirda burchak qo'yilgan bo'lsa shu burchak bilan uchadi
+  let h = car.h;
   const y = Math.max(_rw.y, ground + 0.9);
-  const vf = Math.max(0, car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h));
-  rocketSystem.fire({ x: _rw.x, y, z: _rw.z, h: car.h, v0: vf, pitch, size: m.size, mine: true });
+  if (aimOn) {                                                 // mo'ljal yoqilgan: raketa to'g'ri mo'ljaldagi nuqtaga uchadi
+    const tg = aimTarget();
+    const adx = tg.x - _rw.x, ady = tg.y - y, adz = tg.z - _rw.z;
+    const len = Math.hypot(adx, ady, adz);
+    if (len > 2) {
+      h = Math.atan2(adx, adz);
+      pitch = -Math.asin(clamp(ady / len, -1, 1));
+    }
+  }
+  const cp = Math.cos(pitch);
+  const vf = Math.max(0, car.vx * Math.sin(h) * cp + car.vz * Math.cos(h) * cp);
+  const infinite = aimOn;                                      // mo'ljal yoniq: yo'lida hech narsa bo'lmasa cheksiz uchadi (muharrirdagi masofa hisobga olinmaydi)
+  const range = infinite ? 0 : m.range;
+  rocketSystem.fire({ x: _rw.x, y, z: _rw.z, h, v0: vf, pitch, size: m.size, power: m.power, blast: m.blast, range, heavy: m.heavy, infinite, mine: true });
   mesh.visible = false;
   m.reloadAt[i] = now + ROCKET_COOLDOWN * 1000;
   playRocketLaunchSound(0, 0);
   const r1 = (v) => Math.round(v * 10) / 10;
-  lastRocketCode = `${++rocketSeq},${r1(_rw.x)},${r1(y)},${r1(_rw.z)},${Math.round(car.h * 1000) / 1000},${r1(vf)},${m.size},${pitch}`;
+  lastRocketCode = `${++rocketSeq},${r1(_rw.x)},${r1(y)},${r1(_rw.z)},${Math.round(h * 1000) / 1000},${r1(vf)},${m.size},${Math.round(pitch * 1000) / 1000},${m.power},${m.blast},${range},${m.heavy ? 1 : 0},${infinite ? 1 : 0}`;
 }
 
-// Boshqa o'yinchi uchirgan raketa (kod: id,x,y,z,h,v0,size,pitch).
+// Boshqa o'yinchi uchirgan raketa (kod: id,x,y,z,h,v0,size,pitch,power,blast,range,heavy,infinite - oxirgi beshtasi eski kodda bo'lmasligi mumkin).
 function spawnRemoteRocket(uid, code) {
-  const [, x, y, z, h, v0, size, pitch] = String(code).split(',').map(Number);
+  const [, x, y, z, h, v0, size, pitch, power, blast, range, heavy, infinite] = String(code).split(',').map(Number);
   if (![x, y, z, h].every(Number.isFinite)) return;
-  rocketSystem.fire({ x, y, z, h, v0: v0 || 0, size: clamp(size || 2.4, 0.6, 8), pitch: pitch || 0, mine: false, owner: uid });
+  rocketSystem.fire({
+    x, y, z, h, v0: v0 || 0, size: clamp(size || 2.4, 0.6, 8), pitch: pitch || 0, mine: false, owner: uid,
+    power: clamp(power || 1, 0.3, 4), blast: clamp(blast || 16, 3, 80), range: Math.max(0, range || 0),
+    heavy: !!heavy, infinite: !!infinite,
+  });
   const dx = x - car.x, dy = y - car.y, dz = z - car.z;
   const dist = Math.hypot(dx, dy, dz);
   const rx = -Math.cos(car.h), rz = Math.sin(car.h);
@@ -1690,9 +1817,10 @@ function handleRocketExplode(hit, r) {
   playExplosionSound(dist, ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.8);
   splashMyVehicle(hit, r);
   if (fleet) {
+    const br = clamp(r.blast || 16, 3, 80) * 0.625 * (r.heavy ? 1.25 : 1);   // portlash radiusiga mos bot zarari (oddiy 16 m -> 10 m)
     for (const bot of fleet.bots) {
       const bx = bot.x - hit.x, bz = bot.z - hit.z;
-      if (bx * bx + bz * bz < 100 && hit.y < 10) wreckBot(bot);
+      if (bx * bx + bz * bz < br * br && hit.y < Math.max(10, br)) wreckBot(bot);
     }
   }
 }
@@ -1706,19 +1834,21 @@ function splashMyVehicle(hit, r) {
   const cy = car.y + (mb.minY + mb.maxY) / 2;
   const dx = car.x - hit.x, dy = cy - hit.y, dz = car.z - hit.z;
   const d = Math.hypot(dx, dy, dz);
-  const R = 16;
+  const heavy = !!r.heavy;                             // mashinadan uchirilgan raketa: samolyotnikidan kuchliroq
+  const R = clamp(r.blast || 16, 3, 80) * (heavy ? 1.25 : 1);   // portlash radiusi (muharrirdagi rocketblast)
+  const sc = R / 16, pw = clamp(r.power || 1, 0.3, 4);
   const direct = hit.kind === 'self';
   if (!direct && d > R) return;
-  const level = direct || d < 5 ? 3 : d < 10 ? 2 : 1;
-  crushMyVehicle(hit, mb, dims, level);
-  const k = direct ? 14 : (1 - d / R) * 22;
+  const level = direct || d < 5 * sc ? 3 : d < 10 * sc ? 2 : 1;
+  crushMyVehicle(hit, mb, dims, heavy && level >= 2 ? 3 : level, heavy);   // kuchli raketa yaqin joyda ham to'liq pachoqlaydi
+  const k = (direct ? 14 : (1 - d / R) * 22) * pw * (heavy ? 1.6 : 1);
   const hd = Math.hypot(dx, dz) || 1;
   car.vx += (dx / hd) * k; car.vz += (dz / hd) * k;
-  if (direct) { car.vx *= 0.35; car.vz *= 0.35; }
+  if (direct) { const keep = heavy ? 0.1 : 0.35; car.vx *= keep; car.vz *= keep; }
 }
 
 // Ulovni pachoqlaydi: level 3 = to'liq pachoq (7 joyi eng kuchli), 2 = kuchli, 1 = o'rtacha.
-function crushMyVehicle(hit, mb, dims, level) {
+function crushMyVehicle(hit, mb, dims, level, heavy = false) {
   const root = localRoot(vehicleMode);
   if (!root) return;
   const list = crashDents[vehicleMode];
@@ -1734,8 +1864,14 @@ function crushMyVehicle(hit, mb, dims, level) {
   if (level >= 3) {
     pts.push([0, top, 0], [mb.hw * 0.7, ly, mb.hd * 0.45], [-mb.hw * 0.7, ly, mb.hd * 0.45],
       [mb.hw * 0.7, ly, -mb.hd * 0.45], [-mb.hw * 0.7, ly, -mb.hd * 0.45], [0, ly, mb.hd * 0.9]);
+    if (heavy) {                                      // kuchli raketa: butun mashina bo'ylab qo'shimcha pachoqlar
+      pts.push([0, top, mb.hd * 0.6], [0, top, -mb.hd * 0.6], [0, ly, -mb.hd * 0.9],
+        [mb.hw * 0.35, ly, mb.hd * 0.95], [-mb.hw * 0.35, ly, mb.hd * 0.95],
+        [mb.hw * 0.35, ly, -mb.hd * 0.95], [-mb.hw * 0.35, ly, -mb.hd * 0.95],
+        [mb.hw * 0.9, top, 0], [-mb.hw * 0.9, top, 0]);
+    }
   }
-  const s = level === 3 ? 10 : level === 2 ? 9 : 7;
+  const s = level === 3 ? (heavy ? 13 : 10) : level === 2 ? 9 : 7;
   const r1 = (v) => Math.round(v * 10) / 10;
   for (const [x, y, z] of pts) {
     if (list.length >= MAX_DENTS) break;
