@@ -1,6 +1,6 @@
 name: 9k720
 car: chinese_9k720_iskander_telar-v1.glb
-length: 13.4
+length: 17.5
 camdist: 13
 camheight: 8.6
 aimy: 3.3
@@ -9,9 +9,9 @@ fovspeed: 0.05
 follow: 20
 tilt: 2.5
 rocket: 1
-rocketx: 0.65
+rocketx: 0.7
 rockety: 8
-rocketz: -6.05
+rocketz: -8.05
 rocketsize: 3.8
 rockettilt: 90
 rocketpower: 3
