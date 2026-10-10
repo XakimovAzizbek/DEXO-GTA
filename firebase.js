@@ -30,10 +30,14 @@ export const app = initializeApp(firebaseConfig);
 // Diqqat: mahalliy (localhost) test uchun pastdagi debug qatorini vaqtincha yoqing.
 // self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
 
-initializeAppCheck(app, {
-  provider: new ReCaptchaEnterpriseProvider('6LfovuctAAAAAPAPijuA3DkCrtYV2wJTBhXNWoe2'),
-  isTokenAutoRefreshEnabled: true,
-});
+try {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider('6LfovuctAAAAAPAPijuA3DkCrtYV2wJTBhXNWoe2'),
+    isTokenAutoRefreshEnabled: true,
+  });
+} catch (err) {
+  console.warn('App Check ishga tushmadi:', err);
+}
 
 export const auth = getAuth(app);
 export const db = getDatabase(app);
@@ -118,13 +122,27 @@ export function watchZonePlayers(zoneId, callback) {
 // Qaytaradi: { joined: true } yoki { joined: false, full: true }.
 export async function joinZone(zoneId, user) {
   const playersRef = ref(db, `zones/${zoneId}/players`);
-  const res = await runTransaction(playersRef, (current) => {
-    const players = current || {};
-    if (players[user.uid]) return players;            // allaqachon shu zonada (masalan sahifa yangilangan)
-    if (Object.keys(players).length >= ZONE_CAPACITY) return;  // to'la — bekor qilinadi
-    return { ...players, [user.uid]: { name: user.displayName || user.email || 'O‘yinchi', at: Date.now() } };
-  });
-  if (!res.committed) return { joined: false, full: true };
+  const withTimeout = (promise, ms) => Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Server javob bermadi (timeout)'), { code: 'timeout' })), ms)),
+  ]);
+
+  // Birinchi urinish tranzaksiya bilan, ishlamasa (yoki osilib qolsa) — oddiy yozish bilan.
+  try {
+    const res = await withTimeout(runTransaction(playersRef, (current) => {
+      const players = current || {};
+      if (players[user.uid]) return players;
+      if (Object.keys(players).length >= ZONE_CAPACITY) return;   // to'la — bekor
+      return { ...players, [user.uid]: { name: user.displayName || user.email || 'O‘yinchi', at: Date.now() } };
+    }), 8000);
+    if (!res.committed) return { joined: false, full: true };
+  } catch (err) {
+    if (err && err.code === 'PERMISSION_DENIED') throw err;   // qoidalar muammosi — pastdagi usul ham ishlamaydi
+    console.warn('Tranzaksiya ishlamadi, oddiy usul sinab ko‘riladi:', err);
+    const myRef0 = ref(db, `zones/${zoneId}/players/${user.uid}`);
+    await withTimeout(set(myRef0, { name: user.displayName || user.email || 'O‘yinchi', at: Date.now() }), 8000);
+  }
+
   const myRef = ref(db, `zones/${zoneId}/players/${user.uid}`);
   onDisconnect(myRef).remove();   // sahifa yopilsa/aloqa uzilsa joyi avtomatik bo'shaydi
   return { joined: true };
