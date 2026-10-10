@@ -8,6 +8,9 @@ import {
 import {
   getDatabase, ref, set, update, serverTimestamp, onValue, runTransaction, onDisconnect,
 } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js';
+import {
+  initializeAppCheck, ReCaptchaEnterpriseProvider,
+} from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app-check.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyA6uh9K5M_ntkeDdnJDXFNByI05j94sfDg',
@@ -21,6 +24,17 @@ const firebaseConfig = {
 };
 
 export const app = initializeApp(firebaseConfig);
+
+// ---------- App Check (reCAPTCHA Enterprise) ----------
+// Faqat gta.dexo.dpdns.org domenidan kelgan so'rovlar qabul qilinadi.
+// Diqqat: mahalliy (localhost) test uchun pastdagi debug qatorini vaqtincha yoqing.
+// self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+
+initializeAppCheck(app, {
+  provider: new ReCaptchaEnterpriseProvider('6LfovuctAAAAAPAPijuA3DkCrtYV2wJTBhXNWoe2'),
+  isTokenAutoRefreshEnabled: true,
+});
+
 export const auth = getAuth(app);
 export const db = getDatabase(app);
 
