@@ -758,3 +758,50 @@ export function disposeModel(root) {
     }
   });
 }
+
+// ---------- Raketa modeli (kod bilan yasaladi, GLB kerak emas) ----------
+// Burni +z tomonga qaragan, uzunligi `length` metr. Muharrirda ham, o'yinda ham shu ishlatiladi.
+// opts.flame = true bo'lsa orqasida olov (uchayotgan raketa uchun) - group.userData.flame ichida.
+let _rocketParts = null;
+function rocketParts() {
+  if (_rocketParts) return _rocketParts;
+  _rocketParts = {
+    body: new THREE.CylinderGeometry(0.06, 0.06, 0.75, 12).rotateX(Math.PI / 2),
+    nose: new THREE.ConeGeometry(0.06, 0.26, 12).rotateX(Math.PI / 2),
+    band: new THREE.CylinderGeometry(0.0625, 0.0625, 0.07, 12).rotateX(Math.PI / 2),
+    fin: new THREE.BoxGeometry(0.012, 0.15, 0.18),
+    nozzle: new THREE.CylinderGeometry(0.04, 0.05, 0.07, 10).rotateX(Math.PI / 2),
+    flame: new THREE.ConeGeometry(0.05, 0.4, 10).rotateX(-Math.PI / 2),
+    bodyMat: new THREE.MeshStandardMaterial({ color: '#dfe3e8', roughness: 0.45, metalness: 0.5 }),
+    redMat: new THREE.MeshStandardMaterial({ color: '#c8352a', roughness: 0.5, metalness: 0.3 }),
+    darkMat: new THREE.MeshStandardMaterial({ color: '#2b2f36', roughness: 0.6, metalness: 0.6 }),
+  };
+  return _rocketParts;
+}
+export function buildRocketModel(length = 2.4, opts = {}) {
+  const p = rocketParts();
+  const g = new THREE.Group();
+  const add = (geo, mat, x, y, z, parent = g) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  };
+  add(p.body, p.bodyMat, 0, 0, -0.12);
+  add(p.nose, p.redMat, 0, 0, 0.38);
+  add(p.band, p.redMat, 0, 0, 0.12);
+  add(p.band, p.redMat, 0, 0, -0.3);
+  add(p.nozzle, p.darkMat, 0, 0, -0.52);
+  for (let i = 0; i < 4; i++) {
+    const pivot = new THREE.Group();
+    pivot.rotation.z = i * Math.PI / 2;
+    add(p.fin, p.redMat, 0, 0.1, -0.4, pivot);
+    g.add(pivot);
+  }
+  if (opts.flame) {
+    const mat = new THREE.MeshBasicMaterial({ color: '#ffb347', transparent: true, opacity: 0.9, depthWrite: false });
+    g.userData.flame = add(p.flame, mat, 0, 0, -0.73);
+  }
+  g.scale.setScalar(length);
+  return g;
+}

@@ -4,7 +4,7 @@
 // shuning uchun keyin kirganlar ham aynan shu pachoqni ko'radi (har kimning telefonida bir xil).
 import * as THREE from 'three';
 
-export const MAX_DENTS = 10;
+export const MAX_DENTS = 16;   // raketa zarbasi uchun ko'proq pachoq joyi
 
 const origData = new WeakMap();     // mesh -> asl pozitsiya/normal/rang nusxasi (ta'mirlash uchun)
 const ownGeo = new WeakSet();       // bizga tegishli (nusxalangan) geometriyalar

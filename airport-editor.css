@@ -108,3 +108,13 @@ html, body { height: 100%; overflow: hidden; }
 .mini:active { background: rgba(255, 255, 255, 0.1); }
 .ed-save-row { margin-top: 2px; }
 .status { min-height: 1.3em; color: var(--hazard); font-weight: 600; font-size: 14px; text-align: center; }
+
+/* Tezlik va raketa sozlamalari */
+.ed-tools { max-height: 46vh; overflow-y: auto; }
+.ed-row { flex-wrap: wrap; }
+.ed-wide { min-width: 84px; }
+.ed-sub { margin: 0; text-align: center; color: var(--kerb); font-size: 13px; }
+.mini.is-on { border-color: var(--hazard); background: rgba(255, 201, 51, 0.14); }
+.ed-rocket { display: grid; gap: 8px; }
+.ed-rocket[hidden] { display: none; }
+.ed-rocket .mini { min-height: 40px; padding: 0 12px; font-size: 15px; }

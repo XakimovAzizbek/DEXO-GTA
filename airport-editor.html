@@ -46,6 +46,31 @@
         <button class="mini" type="button" id="rotBtn">⟲ Burish</button>
         <span class="ed-value" id="rotValue">0°</span>
       </div>
+      <div class="ed-row">
+        <button class="mini" type="button" id="slowerBtn">− Sekin</button>
+        <span class="ed-value ed-wide" id="speedValue">×1.0</span>
+        <button class="mini" type="button" id="fasterBtn">+ Tez</button>
+      </div>
+      <p class="ed-sub" id="speedHint"></p>
+      <div class="ed-row">
+        <button class="mini ed-rocket-toggle" type="button" id="rocketBtn">🚀 Raketa: o‘chiq</button>
+      </div>
+      <div class="ed-rocket" id="rocketTools" hidden>
+        <p class="ed-sub">Raketani barmoq bilan suring (aylantirib, boshqa tomondan ham suring). Chap tomonga o‘zi aks etadi.</p>
+        <div class="ed-row">
+          <button class="mini" type="button" data-nudge="z" data-d="-0.1">◀ Orqa</button>
+          <button class="mini" type="button" data-nudge="z" data-d="0.1">Old ▶</button>
+          <button class="mini" type="button" data-nudge="y" data-d="0.1">▲</button>
+          <button class="mini" type="button" data-nudge="y" data-d="-0.1">▼</button>
+        </div>
+        <div class="ed-row">
+          <button class="mini" type="button" data-nudge="x" data-d="-0.1">Tor</button>
+          <button class="mini" type="button" data-nudge="x" data-d="0.1">Keng</button>
+          <button class="mini" type="button" id="rkSmaller">− Raketa</button>
+          <button class="mini" type="button" id="rkBigger">+ Raketa</button>
+        </div>
+        <p class="ed-sub" id="rocketValue"></p>
+      </div>
       <div class="ed-row ed-save-row">
         <button class="btn btn--primary" type="button" id="saveBtn">Saqlash</button>
       </div>

@@ -11,3 +11,9 @@ name: Rafale M
 airplane: dassault_rafale_m_-_fighter_jet_-_free-v1.glb
 length: 15.3
 rotate: 180
+speed: 3
+rocket: 1
+rocketx: 2.15
+rockety: 1.85
+rocketz: -0.85
+rocketsize: 5.6

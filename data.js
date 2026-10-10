@@ -192,6 +192,12 @@ export const AIRPORT_DEFAULTS = {
   aimy: 2.4,
   fov: 62,
   follow: 12,
+  speed: 1,          // tezlik ko'paytirgichi: 1 = oddiy, 2 = ikki baravar tez (0.5 .. 3)
+  rocket: 0,         // 1 = raketa o'rnatilgan (o'yinda raketa tugmasi chiqadi)
+  rocketx: 0,        // raketaning o'ng tomondagi joyi (metr); chap tomonga o'zi aks etadi
+  rockety: 0,        // balandligi (metr)
+  rocketz: 0,        // oldi-orqasi (metr, + burun tomon)
+  rocketsize: 2.4,   // raketa uzunligi (metr)
 };
 const AIRPORT_KEYS = Object.keys(AIRPORT_DEFAULTS);
 

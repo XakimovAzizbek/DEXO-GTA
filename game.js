@@ -9,14 +9,15 @@ import {
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
-  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel,
+  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel, buildRocketModel,
 } from './models.js';
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
 import { unlockCarAudio, updateCarAudio, setCarAudioActive, updateHorn } from './carAudio.js';
 import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
-import { initRemoteAudio, createRemoteVoice, REMOTE_HEAR_RANGE, playCrashSound } from './remoteAudio.js';
+import { initRemoteAudio, createRemoteVoice, REMOTE_HEAR_RANGE, playCrashSound, playExplosionSound, playRocketLaunchSound } from './remoteAudio.js';
+import { createRocketSystem } from './rocket.js';
 import { MAX_DENTS, measureModel, applyDent, repairModel, disposeCrash, encodeDents, decodeDents } from './crash.js';
 // Eslatma: Firebase bu yerda ATAYLAB statik import qilinmagan — game.js offline o'yin (game.html) uchun
 // ham ishlatiladi, va u hech qachon online/Firebase'ga muhtoj bo'lmasligi kerak. Shu sababli Firebase
@@ -332,6 +333,7 @@ function updateBots(dt) {
   const obstacles = [{ x: car.x, z: car.z, speed: playerSpeed }];
 
   fleet.update(car.x, car.z, obstacles, botCfg, dt, (bot, stepDt) => {
+    if (bot._wreck && performance.now() < bot._wreck) bot.speed = 0;   // raketa urgan bot 2 daqiqa to'xtab turadi
     bot.s += bot.speed * stepDt;
     const pos = pointOnRoute(bot.route, bot.s);
     const prx = -pos.dirz, prz = pos.dirx;
@@ -460,15 +462,28 @@ const upBtn = makeFlightBtn('▲', 'up');
 const downBtn = makeFlightBtn('▼', 'down');
 document.body.appendChild(flightPad);
 
+// Ulov turining sozlamalarini CAR ga yozadi. Samolyot/vertolyotda airport muharriridagi "tezlik" ko'paytirgichi qo'llanadi.
+function applyVehicleType(mode) {
+  const t = VEHICLE_TYPES[mode];
+  Object.assign(CAR, t);
+  if (mode === 'plane' || mode === 'heli') {
+    const k = Math.max(0.5, Math.min(3, Number(airportProfiles[mode].speed) || 1));
+    CAR.maxSpeed = t.maxSpeed * k;
+    CAR.accel = t.accel * k;
+    if (mode === 'plane') CAR.stall = t.stall * k;   // tezroq samolyot uchun ko'tarilish tezligi ham mos ravishda oshadi
+  }
+}
+
 const VEHICLE_ORDER = ['car', 'heli', 'plane'];
 const VEHICLE_ICON = { car: '🚗', heli: '🚁', plane: '✈️' };
 function setVehicle(mode) {
   if (!VEHICLE_TYPES[mode] || mode === vehicleMode) return;
   const wasFlying = VEHICLE_TYPES[vehicleMode].flying;
   vehicleMode = mode;
-  Object.assign(CAR, VEHICLE_TYPES[mode]);
+  applyVehicleType(mode);
   for (const k of VEHICLE_ORDER) VEHICLE_GROUPS[k].visible = k === mode;
   flightPad.style.display = vehicleMode === 'heli' ? 'flex' : 'none';   // faqat vertolyotda: samolyot balandligi tezlikdan o'zi hisoblanadi
+  updateRocketBtn();
   car.vx = 0; car.vz = 0; car.vy = 0; car.steer = 0;
   if (CAR.flying && !wasFlying) {
     car.y = Math.max(car.y, (ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0) + 6);
@@ -539,6 +554,8 @@ async function setupAirport(setText, setProgress) {
         if (/rotor|propellar|propeller|\bblade\b|\bprop\b/i.test(o.name || '')) spinNodes.push(o);
       });
       if (spinNodes.length) VEHICLE_SPIN[mode] = spinNodes;
+      setupRocketMounts(mode, profile);   // airport muharririda qo'yilgan raketa
+      if (vehicleMode === mode) applyVehicleType(mode);
     } catch (err) {
       console.warn(`${VEHICLE_LABEL[mode]} modeli yuklanmadi:`, err);
     }
@@ -943,6 +960,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') { keyRight = true; e.preventDefault(); }
   else if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
+  else if (e.code === 'KeyF') { if (!e.repeat) fireRocket(); }
   else if (e.code === 'KeyL') toggleLights();
   else if (e.code === 'KeyV') setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
   else if (e.code === 'Escape') setPaused(!paused);
@@ -1259,6 +1277,7 @@ function frame(now) {
     updateVehicleAudio(vf);
 
     placeCamera(false, dt);
+    rocketSystem.applyShake();   // portlash yaqinida kamera silkinadi
     sun.position.set(car.x + 40, 70, car.z + 25);
     sun.target.position.set(car.x, 0, car.z);
 
@@ -1268,6 +1287,9 @@ function frame(now) {
     updateBillboards(dt);
     updateBots(dt);
     updateRemotePlayers(dt);
+    rocketSystem.update(dt);
+    updateRocketMounts(now);
+    updateBotWrecks(now);
     weather.update(dt);
   }
 
@@ -1484,6 +1506,281 @@ function syncRemoteDents(entry, allowSound) {
   }
 }
 
+// ---------- Raketa (airport muharririda qo'yilgan) ----------
+// Muharrirda raketa samolyot/vertolyotga qo'lda joylanadi (rocket, rocketx/y/z). O'yinda shu joyda ikki tomonda
+// (chap/o'ng) raketa ko'rinadi, tugma (🚀 ikonka yoki F tugmasi) bosilsa navbat bilan uchib ketadi:
+//  - to'g'ri uchadi, nimaga tegsa ham kuchli portlaydi;
+//  - yer/bino/tog'ga tegsa o'sha joy 2 daqiqa qorayib turadi (rocket.js);
+//  - mashina, samolyot yoki vertolyotga tegsa u kuchli pachoq bo'ladi;
+//  - botlar (yo'ldagi mashinalar) 2 daqiqa yonib, to'xtab turadi.
+// Onlaynda: uchirilgan raketa boshqalarga ham ko'rinadi, har bir o'yinchi o'z ulovining pachoqlanishini o'zi hisoblaydi
+// (pachoq ro'yxati avvalgidek `cr` orqali hammaga ko'rinadi).
+const ROCKET_COOLDOWN = 1.6;                                  // soniya: ikki raketa orasidagi vaqt
+const ROCKET_BTN_POS = { right: '16px', bottom: '250px' };    // tugma joyi (kerak bo'lsa o'zgartiring)
+const rocketMounts = { heli: null, plane: null };             // { meshes, next, size, reloadAt }
+let rocketReadyAt = 0, rocketSeq = 0, lastRocketCode = null, rocketBtnReady = true;
+const _rw = new THREE.Vector3();
+const _rcone = { shape: 'circle', x: 0, z: 0, r: 0 };
+
+const rocketBtn = document.createElement('button');
+rocketBtn.type = 'button';
+rocketBtn.setAttribute('aria-label', 'Raketa');
+rocketBtn.innerHTML = '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M12 1.5c3.2 2.6 4.6 6.2 4.6 10.3V16H7.4v-4.2c0-4.1 1.4-7.7 4.6-10.3z" fill="#ff5a3c"/>'
+  + '<circle cx="12" cy="9" r="1.9" fill="#bfe6ff"/>'
+  + '<path d="M7.4 12.5 4.2 16v3.6l3.2-1.6M16.6 12.5l3.2 3.5v3.6L16.6 18" fill="#c8352a"/>'
+  + '<path d="M9.8 16.8c0 1.8.8 3.3 2.2 4.7 1.4-1.4 2.2-2.9 2.2-4.7" fill="#ffb020" stroke="#ffb020"/></svg>';
+Object.assign(rocketBtn.style, {
+  position: 'fixed', right: ROCKET_BTN_POS.right, bottom: ROCKET_BTN_POS.bottom, zIndex: 31, display: 'none',
+  width: '66px', height: '66px', borderRadius: '50%', border: '2px solid rgba(255,255,255,.55)',
+  background: 'rgba(160,30,20,.78)', alignItems: 'center', justifyContent: 'center', padding: 0,
+  cursor: 'pointer', touchAction: 'none', userSelect: 'none', webkitUserSelect: 'none', transition: 'opacity .15s, transform .08s',
+});
+rocketBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  unlockCarAudio();
+  unlockAirportAudio();
+  initRemoteAudio();
+  rocketBtn.style.transform = 'scale(.92)';
+  fireRocket();
+});
+const rocketBtnUp = () => { rocketBtn.style.transform = ''; };
+rocketBtn.addEventListener('pointerup', rocketBtnUp);
+rocketBtn.addEventListener('pointercancel', rocketBtnUp);
+rocketBtn.addEventListener('pointerleave', rocketBtnUp);
+rocketBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+document.body.appendChild(rocketBtn);
+
+function updateRocketBtn() {
+  rocketBtn.style.display = vehicleMode !== 'car' && rocketMounts[vehicleMode] ? 'flex' : 'none';
+}
+
+// airport.txt dagi sozlamaga ko'ra raketalarni ulov guruhiga (modelga emas - pachoqlanmasin) o'rnatadi.
+function setupRocketMounts(mode, profile) {
+  if (!profile || !Number(profile.rocket)) return;
+  const group = mode === 'heli' ? heliGroup : planeGroup;
+  const size = clamp(Number(profile.rocketsize) || 2.4, 0.6, 8);
+  const rx = Number(profile.rocketx) || 0, ry = Number(profile.rockety) || 0, rz = Number(profile.rocketz) || 0;
+  const meshes = [];
+  for (const sx of (Math.abs(rx) > 0.05 ? [1, -1] : [1])) {
+    const m = buildRocketModel(size);
+    m.position.set(sx * rx, ry, rz);
+    m.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
+    group.add(m);
+    meshes.push(m);
+  }
+  rocketMounts[mode] = { meshes, next: 0, size, reloadAt: meshes.map(() => 0) };
+  updateRocketBtn();
+}
+
+// Uchgan raketaning o'rniga yangisi biroz keyin paydo bo'ladi; tugma tayyor bo'lmasa xira turadi.
+function updateRocketMounts(now) {
+  for (const m of Object.values(rocketMounts)) {
+    if (!m) continue;
+    m.reloadAt.forEach((at, i) => { if (at && now >= at) { m.meshes[i].visible = true; m.reloadAt[i] = 0; } });
+  }
+  const ready = now >= rocketReadyAt;
+  if (ready !== rocketBtnReady) {
+    rocketBtnReady = ready;
+    rocketBtn.style.opacity = ready ? '1' : '0.4';
+  }
+}
+
+function fireRocket() {
+  const m = rocketMounts[vehicleMode];
+  if (!m || paused) return;
+  const now = performance.now();
+  if (now < rocketReadyAt) return;
+  rocketReadyAt = now + ROCKET_COOLDOWN * 1000;
+  const i = m.next % m.meshes.length;
+  m.next++;
+  const mesh = m.meshes[i];
+  carRoot.updateMatrixWorld(true);
+  mesh.getWorldPosition(_rw);
+  const ground = ramps.length ? groundHeightAt(ramps, car.x, car.z) : 0;
+  const pitch = car.y - ground > 3 ? 0.05 : 0;                 // havodan uchirilsa biroz pastga qarab uchadi (yerga yetib borishi uchun)
+  const y = Math.max(_rw.y, ground + 0.9);
+  const vf = Math.max(0, car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h));
+  rocketSystem.fire({ x: _rw.x, y, z: _rw.z, h: car.h, v0: vf, pitch, size: m.size, mine: true });
+  mesh.visible = false;
+  m.reloadAt[i] = now + ROCKET_COOLDOWN * 1000;
+  playRocketLaunchSound(0, 0);
+  const r1 = (v) => Math.round(v * 10) / 10;
+  lastRocketCode = `${++rocketSeq},${r1(_rw.x)},${r1(y)},${r1(_rw.z)},${Math.round(car.h * 1000) / 1000},${r1(vf)},${m.size},${pitch}`;
+}
+
+// Boshqa o'yinchi uchirgan raketa (kod: id,x,y,z,h,v0,size,pitch).
+function spawnRemoteRocket(uid, code) {
+  const [, x, y, z, h, v0, size, pitch] = String(code).split(',').map(Number);
+  if (![x, y, z, h].every(Number.isFinite)) return;
+  rocketSystem.fire({ x, y, z, h, v0: v0 || 0, size: clamp(size || 2.4, 0.6, 8), pitch: pitch || 0, mine: false, owner: uid });
+  const dx = x - car.x, dy = y - car.y, dz = z - car.z;
+  const dist = Math.hypot(dx, dy, dz);
+  const rx = -Math.cos(car.h), rz = Math.sin(car.h);
+  playRocketLaunchSound(dist, ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.75);
+}
+
+const rocketSystem = createRocketSystem({
+  scene, camera,
+  groundAt: (x, z) => (ramps.length ? groundHeightAt(ramps, x, z) : 0),
+  inBounds: (x, z) => x > -bounds.w - 10 && x < bounds.e + 10 && z > -bounds.n - 10 && z < bounds.s + 10,
+  collide: rocketCollide,
+  onExplode: handleRocketExplode,
+});
+
+// Nuqta (px,py,pz) ulov qutisining ichidami (ulovning o'z koordinatasida tekshiriladi).
+function pointInVehicleBox(px, py, pz, cx, cy, cz, h, mb, pad) {
+  const dx = px - cx, dz = pz - cz;
+  const c = Math.cos(h), s = Math.sin(h);
+  const lx = dx * c - dz * s, lz = dx * s + dz * c;
+  return Math.abs(lx) <= mb.hw + pad && Math.abs(lz) <= mb.hd + pad && py >= cy + mb.minY - pad && py <= cy + mb.maxY + pad;
+}
+
+// Raketa har 1 m da shuni chaqiradi: nimagadir tegdimi? (null = hozircha uchib ketyapti)
+function rocketCollide(x, y, z, r) {
+  const g = ramps.length ? groundHeightAt(ramps, x, z) : 0;
+  if (y <= g + 0.05) return { x, y: g, z, kind: 'ground' };
+
+  for (const col of colliders) {                       // uy, bino, daraxt, tog' ...
+    const dx = x - col.x, dz = z - col.z;
+    if (dx * dx + dz * dz > col.reach2) continue;
+    if (y > col.top) continue;                         // tepasidan o'tib ketdi
+    let hit;
+    if (col.cone) {
+      _rcone.x = col.x; _rcone.z = col.z;
+      _rcone.r = Math.max(0, col.r * (1 - Math.max(y, 0) / col.top));
+      hit = _rcone.r > 0 ? collideCircle(_rcone, x, z, 0.35) : null;
+    } else {
+      hit = collideCircle(col, x, z, 0.35);
+    }
+    if (hit) return { x, y, z, kind: 'wall' };
+  }
+
+  if (fleet) {                                         // yo'ldagi botlar
+    for (const bot of fleet.bots) {
+      const dx = x - bot.x, dz = z - bot.z;
+      if (dx * dx + dz * dz < 6.5 && y < g + 3.2) return { x, y, z, kind: 'bot', bot };
+    }
+  }
+
+  if (!r.mine) {                                       // boshqaning raketasi mening ulovimga tegdimi
+    const dims = localDims(vehicleMode);
+    if (dims && pointInVehicleBox(x, y, z, car.x, car.y, car.z, car.h, bodyFrom(dims, vehicleMode), 0.5)) {
+      return { x, y, z, kind: 'self' };
+    }
+  }
+
+  for (const [uid, e] of remotePlayers) {              // boshqa o'yinchilarning ulovlari (ularning pachoqini o'zlari hisoblaydi)
+    if (uid === r.owner || !e.model || !e.dims || !e.group.visible) continue;
+    const gp = e.group.position;
+    if (pointInVehicleBox(x, y, z, gp.x, gp.y, gp.z, e.group.rotation.y, bodyFrom(e.dims, e.kind), 0.5)) {
+      return { x, y, z, kind: 'remote' };
+    }
+  }
+  return null;
+}
+
+// Portlash: ovoz + mening ulovimni va botlarni shikastlash.
+function handleRocketExplode(hit, r) {
+  const cp = camera.position;
+  const dx = hit.x - cp.x, dz = hit.z - cp.z;
+  const dist = Math.hypot(dx, hit.y - cp.y, dz);
+  const rx = -Math.cos(car.h), rz = Math.sin(car.h);
+  playExplosionSound(dist, ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.8);
+  splashMyVehicle(hit, r);
+  if (fleet) {
+    for (const bot of fleet.bots) {
+      const bx = bot.x - hit.x, bz = bot.z - hit.z;
+      if (bx * bx + bz * bz < 100 && hit.y < 10) wreckBot(bot);
+    }
+  }
+}
+
+// Portlash mening ulovimga yaqin bo'lsa yoki to'g'ridan-to'g'ri tegsa: kuchli pachoq + itarib yuborish.
+function splashMyVehicle(hit, r) {
+  if (r.mine && r.age < 0.7) return;                   // o'zim uchirgan raketa o'zimga tegmasin
+  const dims = localDims(vehicleMode);
+  if (!dims) return;
+  const mb = bodyFrom(dims, vehicleMode);
+  const cy = car.y + (mb.minY + mb.maxY) / 2;
+  const dx = car.x - hit.x, dy = cy - hit.y, dz = car.z - hit.z;
+  const d = Math.hypot(dx, dy, dz);
+  const R = 16;
+  const direct = hit.kind === 'self';
+  if (!direct && d > R) return;
+  const level = direct || d < 5 ? 3 : d < 10 ? 2 : 1;
+  crushMyVehicle(hit, mb, dims, level);
+  const k = direct ? 14 : (1 - d / R) * 22;
+  const hd = Math.hypot(dx, dz) || 1;
+  car.vx += (dx / hd) * k; car.vz += (dz / hd) * k;
+  if (direct) { car.vx *= 0.35; car.vz *= 0.35; }
+}
+
+// Ulovni pachoqlaydi: level 3 = to'liq pachoq (7 joyi eng kuchli), 2 = kuchli, 1 = o'rtacha.
+function crushMyVehicle(hit, mb, dims, level) {
+  const root = localRoot(vehicleMode);
+  if (!root) return;
+  const list = crashDents[vehicleMode];
+  const c = Math.cos(car.h), sn = Math.sin(car.h);
+  const dx = hit.x - car.x, dz = hit.z - car.z;
+  const hgt = mb.maxY - mb.minY;
+  const lx = clamp(dx * c - dz * sn, -mb.hw, mb.hw);
+  const lz = clamp(dx * sn + dz * c, -mb.hd, mb.hd);
+  const ly = clamp(hit.y - car.y, mb.minY + hgt * 0.15, mb.minY + hgt * 0.85);
+  const top = mb.minY + hgt * 0.85;
+  const pts = [[lx, ly, lz]];
+  if (level >= 2) pts.push([0, top, lz * 0.4], [-lx * 0.5, ly, lz * 0.7]);
+  if (level >= 3) {
+    pts.push([0, top, 0], [mb.hw * 0.7, ly, mb.hd * 0.45], [-mb.hw * 0.7, ly, mb.hd * 0.45],
+      [mb.hw * 0.7, ly, -mb.hd * 0.45], [-mb.hw * 0.7, ly, -mb.hd * 0.45], [0, ly, mb.hd * 0.9]);
+  }
+  const s = level === 3 ? 10 : level === 2 ? 9 : 7;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  for (const [x, y, z] of pts) {
+    if (list.length >= MAX_DENTS) break;
+    const dent = { x: r1(x), y: r1(y), z: r1(z), s };
+    list.push(dent);
+    applyDent(root, dent, { dims, skip: localSkip(vehicleMode) });
+  }
+  playCrashSound(10, 0, 0);
+  localCrashSoundAt = performance.now();
+}
+
+// Yo'ldagi bot mashina: yonib, qorayib, 2 daqiqa to'xtab turadi (bot modeli InstancedMesh, shuning uchun uning ustiga
+// pachoqlangan, kuygan "qoldiq" qo'yiladi).
+const botWrecks = [];
+const wreckGeo = new THREE.BoxGeometry(2.1, 1.0, 4.5);
+const wreckMat = new THREE.MeshLambertMaterial({ color: '#141414' });
+function wreckBot(bot) {
+  const now = performance.now();
+  if (bot._wreck && now < bot._wreck) return;
+  bot._wreck = now + 120000;
+  const m = new THREE.Mesh(wreckGeo, wreckMat);
+  m.position.set(bot.x, 0.5, bot.z);
+  m.rotation.set((Math.random() - 0.5) * 0.12, (bot.heading || 0) + (Math.random() - 0.5) * 0.2, (Math.random() - 0.5) * 0.18);
+  m.scale.set(1, 0.8 + Math.random() * 0.2, 1);
+  m.castShadow = shadowsOn;
+  scene.add(m);
+  botWrecks.push({ mesh: m, bot, until: bot._wreck, smokeAt: 0, born: now });
+  rocketSystem.addScorch(bot.x, bot.z, 6);
+}
+function updateBotWrecks(now) {
+  for (let i = botWrecks.length - 1; i >= 0; i--) {
+    const w = botWrecks[i];
+    if (now >= w.until) {
+      scene.remove(w.mesh);
+      w.bot._wreck = 0;
+      botWrecks.splice(i, 1);
+      continue;
+    }
+    if (now - w.born < 25000 && now >= w.smokeAt) {      // dastlabki 25 soniya tutaydi
+      w.smokeAt = now + 350;
+      rocketSystem.smoke(w.mesh.position.x, 1.2, w.mesh.position.z);
+    }
+  }
+}
+
 // ---------- Online: zonadagi boshqa o'yinchilarni ko'rsatish ----------
 // Har bir o'yinchi o'z holatini (x,y,z,h,vehicle + qaysi mashina/samolyot/vertolyot ekani + signal) davriy
 // ravishda Realtime Database'ga yozadi. Boshqalarning holatini o'qib, ularning HAQIQIY GLB modelini
@@ -1665,7 +1962,7 @@ function upsertRemote(uid, data) {
       target: { x: data.x, y: data.y || 0, z: data.z, h: data.h || 0 },
       speed: 0, vx: 0, vz: 0, lastAt: now, horn: false, voice: null,
       fade: 1, appliedFade: -1, shadow: null, token: 0, dropped: false,
-      dims: null, dents: [], dentApplied: 0, crashCd: 0,
+      dims: null, dents: [], dentApplied: 0, crashCd: 0, rk: '',
     };
     created = true;
     remotePlayers.set(uid, entry);
@@ -1687,6 +1984,8 @@ function upsertRemote(uid, data) {
   entry.target.h = data.h || 0;
   entry.horn = !!data.horn;   // signal holati (faqat o'zgarganda keladi, shuning uchun holat sifatida saqlaymiz)
   entry.dents = decodeDents(data.cr);   // boshqa o'yinchining pachoqlari (yangi kirganlar ham ko'radi)
+  if (created) entry.rk = data.rk || '';              // kirganda eski raketani qayta uchirmaymiz
+  else if (data.rk && data.rk !== entry.rk) { entry.rk = data.rk; spawnRemoteRocket(uid, data.rk); }
   if (entry.key !== key) {   // birinchi marta yoki ulov/model almashtirilgan (pachoqlar model yuklangach qo'llanadi)
     entry.key = key;
     applyRemoteModel(entry, kind, data);
@@ -1790,6 +2089,7 @@ export async function startMultiplayer(zoneId, uid) {
   const myRef = dbRef(db, `zones/${zoneId}/players/${uid}`);
   const lastSent = {};   // oxirgi muvaffaqiyatli yuborilgan qiymatlar - faqat o'zgarganini yuboramiz (Firebase limiti tejaladi)
   let lastFullAt = performance.now();
+  let rkSent = null, rkRetryAt = 0;
   multiplayerTimer = setInterval(() => {
     if (paused) {
       if (lastSent.horn) dbUpdate(myRef, { horn: false }).then(() => { lastSent.horn = false; }).catch(() => {});
@@ -1816,6 +2116,11 @@ export async function startMultiplayer(zoneId, uid) {
     let any = false;
     for (const k of Object.keys(next)) {
       if (lastSent[k] !== next[k]) { changed[k] = next[k]; any = true; }
+    }
+    const rkNow = performance.now();
+    if (lastRocketCode && lastRocketCode !== rkSent && rkNow > rkRetryAt) {   // raketa uchirilgani (boshqalar ham ko'rsin)
+      const code = lastRocketCode;
+      dbUpdate(myRef, { rk: code }).then(() => { rkSent = code; }).catch(() => { rkRetryAt = performance.now() + 5000; });
     }
     if (!any) return;   // joyida turgan o'yinchi hech narsa yubormaydi
     dbUpdate(myRef, changed).then(() => Object.assign(lastSent, changed)).catch(() => {});   // internet uzilsa, keyingi urinishda qayta yuboriladi

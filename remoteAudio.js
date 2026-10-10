@@ -319,3 +319,106 @@ export function playCrashSound(strength = 5, dist = 0, pan = 0) {
 
   setTimeout(() => { try { out.disconnect(); } catch { /* ok */ } }, 1000);
 }
+
+// ---- Raketa portlashi: chuqur gumburlash + shovqin + chirsillash (uzoqdan ham eshitiladi) ----
+// dist: eshituvchigacha masofa (m), pan: -1..1. Mening o'z portlashim uchun dist = 0.
+export function playExplosionSound(dist = 0, pan = 0) {
+  if (!ctx) return;
+  const near = atten(dist, 30, 800);
+  const vol = 1.0 * near;
+  if (vol < 0.02) return;
+  if (ctx.state === 'suspended') ctx.resume();
+  const t0 = ctx.currentTime;
+  const out = ctx.createGain();
+  out.gain.value = Math.min(1, vol);
+  let tail = out;
+  if (ctx.createStereoPanner) {
+    const p = ctx.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, pan));
+    out.connect(p);
+    tail = p;
+  }
+  const comp = ctx.createDynamicsCompressor();
+  comp.connect(ctx.destination);
+  tail.connect(comp);
+
+  // 1) Past shovqin - "bum" (pasayib boruvchi past chastota)
+  const noise = ctx.createBufferSource();
+  noise.buffer = getNoise(ctx);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(2400, t0);
+  lp.frequency.exponentialRampToValueAtTime(90, t0 + 1.8);
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t0);
+  ng.gain.exponentialRampToValueAtTime(1.0, t0 + 0.012);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t0 + 2.0);
+  noise.connect(lp).connect(ng).connect(out);
+  noise.start(t0);
+  noise.stop(t0 + 2.1);
+
+  // 2) Chuqur zarba
+  const thump = ctx.createOscillator();
+  thump.type = 'sine';
+  thump.frequency.setValueAtTime(110, t0);
+  thump.frequency.exponentialRampToValueAtTime(26, t0 + 0.9);
+  const tg = ctx.createGain();
+  tg.gain.setValueAtTime(0.0001, t0);
+  tg.gain.exponentialRampToValueAtTime(1.0, t0 + 0.015);
+  tg.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.1);
+  thump.connect(tg).connect(out);
+  thump.start(t0);
+  thump.stop(t0 + 1.2);
+
+  // 3) Yorilish chirsillashi (o'rta-yuqori chastota)
+  const crack = ctx.createBufferSource();
+  crack.buffer = getNoise(ctx);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 2200;
+  bp.Q.value = 0.6;
+  const cg = ctx.createGain();
+  cg.gain.setValueAtTime(0.0001, t0);
+  cg.gain.exponentialRampToValueAtTime(0.7, t0 + 0.004);
+  cg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
+  crack.connect(bp).connect(cg).connect(out);
+  crack.start(t0);
+  crack.stop(t0 + 0.4);
+
+  setTimeout(() => { try { out.disconnect(); comp.disconnect(); } catch { /* ok */ } }, 2600);
+}
+
+// ---- Raketa uchirilishi: "shshshsh" - tez ko'tariluvchi shovqin ----
+export function playRocketLaunchSound(dist = 0, pan = 0) {
+  if (!ctx) return;
+  const near = atten(dist, 20, 420);
+  const vol = 0.55 * near;
+  if (vol < 0.02) return;
+  if (ctx.state === 'suspended') ctx.resume();
+  const t0 = ctx.currentTime;
+  const out = ctx.createGain();
+  out.gain.value = vol;
+  let tail = out;
+  if (ctx.createStereoPanner) {
+    const p = ctx.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, pan));
+    out.connect(p);
+    tail = p;
+  }
+  tail.connect(ctx.destination);
+  const noise = ctx.createBufferSource();
+  noise.buffer = getNoise(ctx);
+  const bp = ctx.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.Q.value = 0.9;
+  bp.frequency.setValueAtTime(350, t0);
+  bp.frequency.exponentialRampToValueAtTime(2600, t0 + 0.9);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(1.0, t0 + 0.08);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.3);
+  noise.connect(bp).connect(g).connect(out);
+  noise.start(t0);
+  noise.stop(t0 + 1.4);
+  setTimeout(() => { try { out.disconnect(); } catch { /* ok */ } }, 1800);
+}
