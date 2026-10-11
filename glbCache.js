@@ -7,7 +7,7 @@
 
 const DB_NAME = 'dexo-gta-cache';
 const STORE = 'glb';
-const DB_VERSION = 2;   // 2: eski (buzilgan bo'lishi mumkin) keshni bir marta butunlay tozalash uchun
+const DB_VERSION = 3;   // 3: yengillashtirilgan GLB uylar (kichik teksturalar) - eski og'ir keshni bir marta tozalash uchun
 
 function openDB() {
   return new Promise((resolve, reject) => {

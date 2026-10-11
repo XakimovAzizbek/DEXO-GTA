@@ -221,9 +221,11 @@ function addGlbHouses(file, list, res) {
       mesh.setMatrixAt(i, house);
     });
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.frustumCulled = false;
+    // Kamera ko'rmayotgan uy chizilmasin (oldin frustumCulled = false edi - har kadr hamma uy chizilardi)
+    if (mesh.computeBoundingSphere) { mesh.computeBoundingSphere(); mesh.frustumCulled = true; }
+    else mesh.frustumCulled = false;   // eski three versiyasi - xavfsiz variant
     mesh.castShadow = shadowsOn;
-    mesh.receiveShadow = shadowsOn;
+    mesh.receiveShadow = false;        // GLB uy soya qabul qilmaydi (yengilroq)
     scene.add(mesh);
   });
 }
