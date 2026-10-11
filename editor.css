@@ -41,7 +41,7 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
   background: rgba(27, 31, 39, 0.96);
   border-top: 1px solid var(--asphalt-line);
 }
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
 .tabs button {
   min-height: 44px; padding: 0 6px;
   border: 2px solid var(--asphalt-line); border-radius: 10px;
@@ -156,3 +156,12 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 .light-row .light-unit { opacity: 0.7; font-size: 0.9em; }
 .light-pick.is-active { outline: 2px solid #ffc933; outline-offset: 1px; }
 .hint--accent { color: #ffc933; }
+
+/* Havo yo‘llari: tanlangan yo‘l tugmasi */
+.mini.is-active { outline: 2px solid var(--hazard); outline-offset: 1px; }
+
+/* Havo paneli: ko'p tugma bo'lgani uchun ichida aylantiriladi */
+.panel--air { max-height: 40vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+.air-label { display: block; margin-top: 10px; color: var(--hazard); font-size: 13px; font-weight: 600; }
+.mini--ai { border-color: var(--sign-green); color: #7ee2a0; }
+.mini--model { padding: 0 12px; }

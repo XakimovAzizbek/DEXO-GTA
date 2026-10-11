@@ -14,6 +14,7 @@ import {
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
 import { createBotFleet } from './botFleet.js';
+import { createAirFleet, AIR_MAX_PATHS } from './airFleet.js';
 import { unlockCarAudio, updateCarAudio, setCarAudioActive, updateHorn } from './carAudio.js';
 import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
 import { initRemoteAudio, createRemoteVoice, REMOTE_HEAR_RANGE, playCrashSound, playExplosionSound, playRocketLaunchSound } from './remoteAudio.js';
@@ -568,6 +569,62 @@ async function setupAirport(setText, setProgress) {
       console.warn(`${VEHICLE_LABEL[mode]} modeli yuklanmadi:`, err);
     }
   }
+}
+
+// ---------- Havo harakati: qo'lda chizilgan yo'llar bo'ylab uchadigan AI samolyot/vertolyotlar ----------
+let airFleet = null;
+const AIR_BOT_LIMIT = 24;   // jami havo botlari (telefon uchun cheklov)
+const AIR_SPIN_RE = /rotor|propellar|propeller|\bblade\b|\bprop\b/i;
+
+// Har bir bot uchun YANGI model: yo'lda tanlangan GLB (airport.txt dagi nom) nusxasi; bo'lmasa o'yinchining
+// samolyot/vertolyoti nusxasi; u ham bo'lmasa kod bilan yasalgan oddiy model.
+const airPathModels = new Map();   // airport.txt dagi nom -> yuklangan model (yo'llar uchun)
+function makeAirModel(kind, modelName) {
+  const built = kind === 'heli' ? heliBuilt : planeBuilt;
+  const src = (modelName && airPathModels.get(modelName)) || airRoots[kind];
+  let root, spin = [];
+  if (src && src !== built.group) {
+    root = src.clone(true);
+    root.traverse((o) => { if (AIR_SPIN_RE.test(o.name || '')) spin.push(o); });
+  } else {
+    const fresh = kind === 'heli' ? buildHeli() : buildPlane();
+    root = fresh.group;
+    spin = [fresh.spin, fresh.spin2].filter(Boolean);
+  }
+  root.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+  return { root, spin };
+}
+
+// Yo'llarda tanlangan modellarni (airport.txt) oldindan yuklaydi, keyin botlar yaratiladi.
+async function loadAirPathModels(list) {
+  const names = [...new Set(list.map((p) => p && p.model).filter((n) => typeof n === 'string' && n))];
+  if (!names.length) return;
+  const all = await fetchAirportList();
+  for (const name of names) {
+    const entry = all.find((a) => a.name === name);
+    if (!entry) continue;
+    const mode = entry.kind === 'helicopter' ? 'heli' : 'plane';
+    if (airportProfiles[mode].name === name && airRoots[mode]) { airPathModels.set(name, airRoots[mode]); continue; }   // o'yinchi modeli bilan bir xil
+    try {
+      airPathModels.set(name, await loadAirportModel({ ...AIRPORT_DEFAULTS, ...entry }));
+    } catch (err) {
+      console.warn(`Havo yo‘li modeli yuklanmadi: ${name}`, err);
+    }
+  }
+}
+
+async function setupAirTraffic() {
+  const list = Array.isArray(zone.air) ? zone.air.slice(0, AIR_MAX_PATHS) : [];
+  if (!list.length) return;
+  await loadAirPathModels(list);
+  airFleet = createAirFleet({ scene, makeModel: makeAirModel, obstacles: { cols: colliders, ramps }, maxBots: AIR_BOT_LIMIT });
+  for (const raw of list) {
+    const info = airFleet.addPath(raw);
+    if (!info.ok) console.warn('Havo yo‘li to‘liq xavfsiz emas yoki yaroqsiz:', info);
+  }
+}
+function updateAirTraffic(dt) {
+  if (airFleet) airFleet.update(dt, car.x, car.y, car.z);
 }
 
 // ---------- Fizika ----------
@@ -1298,6 +1355,7 @@ function frame(now) {
     drawMinimap();
     updateBillboards(dt);
     updateBots(dt);
+    updateAirTraffic(dt);
     updateRemotePlayers(dt);
     rocketSystem.update(dt);
     updateRocketMounts(now);
@@ -2335,6 +2393,8 @@ async function start() {
     (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
   );
   respawn();
+  loadingText.textContent = 'Havo harakati yuklanmoqda…';
+  await setupAirTraffic();
   await setupBots((text) => { loadingText.textContent = text; });
   setupBillboards(await fetchBillboardList());
 

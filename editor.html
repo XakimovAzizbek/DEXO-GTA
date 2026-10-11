@@ -39,6 +39,7 @@
       <button type="button" role="tab" data-tool="place" class="is-active">Qo‘yish</button>
       <button type="button" role="tab" data-tool="select">Tanlash</button>
       <button type="button" role="tab" data-tool="camera">Kamera</button>
+      <button type="button" role="tab" data-tool="air">Havo</button>
       <button type="button" id="more">Boshqa</button>
     </div>
 
@@ -52,6 +53,45 @@
         </div>
       </div>
       <div class="palette" id="palette"></div>
+    </div>
+
+    <div class="panel panel--air" data-panel="air" hidden>
+      <p class="hint" id="airInfo"></p>
+
+      <span class="air-label">1. Samolyot / vertolyot (GLB fayldan)</span>
+      <div class="actions" id="airModels"></div>
+
+      <span class="air-label">2. Qo‘lda yo‘l chizish</span>
+      <div class="actions">
+        <button type="button" class="mini" id="airAltDown">− Balandlik</button>
+        <button type="button" class="mini" id="airAltLabel" disabled>90 m</button>
+        <button type="button" class="mini" id="airAltUp">+ Balandlik</button>
+        <button type="button" class="mini" id="airCount">Botlar: 1</button>
+        <button type="button" class="mini" id="airNew">+ Yangi yo‘l</button>
+        <button type="button" class="mini" id="airUndoPt">↶ Nuqta</button>
+        <button type="button" class="mini" id="airShiftDown">↓ Yo‘lni tushirish</button>
+        <button type="button" class="mini" id="airShiftUp">↑ Yo‘lni ko‘tarish</button>
+        <button type="button" class="mini" id="airFix">Avto-tuzatish</button>
+        <button type="button" class="mini mini--danger" id="airDel">Yo‘lni o‘chirish</button>
+      </div>
+
+      <span class="air-label">3. AI yo‘llar (to‘siqlardan xavfsiz)</span>
+      <div class="actions">
+        <button type="button" class="mini mini--ai" id="airAuto">🤖 AI yo‘llar (10 ta)</button>
+      </div>
+
+      <span class="air-label">4. Uchish va qo‘nish joyi</span>
+      <div class="actions">
+        <button type="button" class="mini" id="airPadSet">📍 Joy belgilash</button>
+        <button type="button" class="mini mini--ai" id="airPadAI">🛫 AI: shu joydan</button>
+        <button type="button" class="mini" id="airFar">➕ Uzoqroq</button>
+        <button type="button" class="mini" id="airNear">➖ Yaqinroq</button>
+        <button type="button" class="mini" id="airRangeLabel" disabled>Masofa: —</button>
+        <button type="button" class="mini mini--danger" id="airPadClear">Joyni olib tashlash</button>
+      </div>
+
+      <span class="air-label">Yo‘llar ro‘yxati</span>
+      <div class="actions" id="airList"></div>
     </div>
 
     <div class="panel" data-panel="select" hidden>
