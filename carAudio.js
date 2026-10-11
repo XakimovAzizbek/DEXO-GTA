@@ -1,78 +1,41 @@
-// DEXO GTA: mashina ovozlari — dvigatel (gaz bosilganda kuchayadi) va tormoz ovozi.
-// Hammasi Web Audio API bilan kod ichida yasaladi, tashqi mp3/wav fayl kerak emas.
+// DEXO GTA: mashina ovozlari — dvigatel (tezlik va gazga qarab), yo'l shovqini, tormoz g'ijirlashi va signal.
+// Ovozlar tayyor mp3 fayllardan (mashina-1..5.mp3, shamol.mp3, mashina-tormoz.mp3, mashina-signal.mp3) olinadi,
+// sfx.js ularni yuklab, uzilishsiz aylantiradi. Fayllar o'yin sahifasi bilan bir papkada turishi kerak.
+
+import { makeLoop, carEngineLayers, carRpm } from './sfx.js';
 
 let ctx = null;
 let nodes = null;
 let unlocking = false;
-
-function makeNoiseBuffer(ac, seconds) {
-  const buf = ac.createBuffer(1, Math.floor(ac.sampleRate * seconds), ac.sampleRate);
-  const data = buf.getChannelData(0);
-  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-  return buf;
-}
 
 function build(ac) {
   const master = ac.createGain();
   master.gain.value = 0.55;
   master.connect(ac.destination);
 
-  // ---- Dvigatel: ikkita "arra" (sawtooth) generator + pastki chastota filtri ----
-  // Tezlik oshganda chastota (aylanish tezligi) va filtr ochiladi; gaz bosilganda ovoz kuchayadi va o'tkirlashadi.
+  // ---- Dvigatel: 5 ta mp3 qatlam (past -> baland aylanish), aylanishga qarab aralashadi ----
   const engineFilter = ac.createBiquadFilter();
   engineFilter.type = 'lowpass';
-  engineFilter.frequency.value = 500;
-  engineFilter.Q.value = 0.8;
+  engineFilter.frequency.value = 3000;
   const engineGain = ac.createGain();
   engineGain.gain.value = 0;
-  const osc1 = ac.createOscillator();
-  osc1.type = 'sawtooth';
-  osc1.frequency.value = 45;
-  const osc2 = ac.createOscillator();
-  osc2.type = 'sawtooth';
-  osc2.frequency.value = 45 * 1.5;
-  const osc2Gain = ac.createGain();
-  osc2Gain.gain.value = 0.35;
-  osc1.connect(engineFilter);
-  osc2.connect(osc2Gain).connect(engineFilter);
   engineFilter.connect(engineGain).connect(master);
-  osc1.start();
-  osc2.start();
+  const engine = carEngineLayers(ac, engineFilter);
 
-  // ---- Tormoz: filtrlangan shovqin (noise) — g'ijirlash effekti ----
-  const noiseSrc = ac.createBufferSource();
-  noiseSrc.buffer = makeNoiseBuffer(ac, 2);
-  noiseSrc.loop = true;
-  const brakeFilter = ac.createBiquadFilter();
-  brakeFilter.type = 'bandpass';
-  brakeFilter.frequency.value = 1800;
-  brakeFilter.Q.value = 1.1;
-  const brakeGain = ac.createGain();
-  brakeGain.gain.value = 0;
-  noiseSrc.connect(brakeFilter).connect(brakeGain).connect(master);
-  noiseSrc.start();
+  // ---- Yo'l/shamol shovqini: tezlik oshgani sari kuchayadi ----
+  const roadFilter = ac.createBiquadFilter();
+  roadFilter.type = 'lowpass';
+  roadFilter.frequency.value = 800;
+  roadFilter.connect(master);
+  const road = makeLoop(ac, 'shamol', roadFilter);
 
-  // ---- Signal (horn): ikkita "kvadrat" ton, klassik ikki tovushli mashina signaliga o'xshash ----
-  const hornGain = ac.createGain();
-  hornGain.gain.value = 0;
-  const hornFilter = ac.createBiquadFilter();
-  hornFilter.type = 'lowpass';
-  hornFilter.frequency.value = 2200;
-  const hOsc1 = ac.createOscillator();
-  hOsc1.type = 'square';
-  hOsc1.frequency.value = 415;
-  const hOsc2 = ac.createOscillator();
-  hOsc2.type = 'square';
-  hOsc2.frequency.value = 523;
-  const hOsc2Gain = ac.createGain();
-  hOsc2Gain.gain.value = 0.55;
-  hOsc1.connect(hornFilter);
-  hOsc2.connect(hOsc2Gain).connect(hornFilter);
-  hornFilter.connect(hornGain).connect(master);
-  hOsc1.start();
-  hOsc2.start();
+  // ---- Tormoz g'ijirlashi ----
+  const brake = makeLoop(ac, 'mashina-tormoz', master);
 
-  return { master, engineGain, engineFilter, osc1, osc2, brakeGain, brakeFilter, hornGain };
+  // ---- Signal (klakson): ikki tovushli ----
+  const horn = makeLoop(ac, 'mashina-signal', master);
+
+  return { master, engine, engineFilter, engineGain, road, roadFilter, brake, horn };
 }
 
 // Brauzerlar ovozni faqat foydalanuvchi bosgandan keyin ruxsat beradi — shu uchun bu funksiya
@@ -101,19 +64,20 @@ export function updateCarAudio(speed, maxSpeed, gas, brake) {
   const t = ctx.currentTime;
   const ratio = Math.max(0, Math.min(1, speed / Math.max(1, maxSpeed)));
 
-  // Dvigatel: tezlik oshgani sayin "aylanish" balandlashadi; gaz bosilganda ovoz yanada kuchayadi va o'tkirlashadi.
-  const rpm = 42 + ratio * 165 + (gas ? 28 : 0);
-  nodes.osc1.frequency.setTargetAtTime(rpm, t, 0.08);
-  nodes.osc2.frequency.setTargetAtTime(rpm * 1.5, t, 0.08);
-  nodes.engineFilter.frequency.setTargetAtTime(480 + ratio * 2600 + (gas ? 500 : 0), t, 0.12);
-  const engineVol = (gas ? 0.5 : 0.18) + ratio * 0.28;
-  nodes.engineGain.gain.setTargetAtTime(engineVol, t, 0.12);
+  // Dvigatel: tezlikka qarab pog'ona bo'yicha aylanish ko'tariladi (almashganda tushadi); gaz bosilganda ochiq va baland,
+  // gazsiz (sekinlashganda) xiraroq va past ovozda.
+  nodes.engine.update(carRpm(ratio, gas), t, 0.06);
+  nodes.engineFilter.frequency.setTargetAtTime(gas ? 12000 : 2600 + ratio * 2600, t, 0.1);
+  nodes.engineGain.gain.setTargetAtTime((gas ? 1.7 : 1.05) + ratio * 0.2, t, 0.12);
+
+  // Yo'l shovqini
+  nodes.road.setGain(Math.min(1.1, ratio * ratio * 1.3), t, 0.2);
+  nodes.roadFilter.frequency.setTargetAtTime(500 + ratio * 2800, t, 0.2);
 
   // Tormoz: faqat tezlik yetarli bo'lganda va tormoz bosilganda eshitiladi, tezlikka qarab kuchayadi.
   const braking = brake && speed > 1.5;
-  const brakeVol = braking ? Math.min(0.5, 0.1 + ratio * 0.45) : 0;
-  nodes.brakeGain.gain.setTargetAtTime(brakeVol, t, braking ? 0.04 : 0.3);
-  nodes.brakeFilter.frequency.setTargetAtTime(1600 + ratio * 1400, t, 0.15);
+  nodes.brake.setGain(braking ? Math.min(1.0, 0.2 + ratio * 0.9) : 0, t, braking ? 0.04 : 0.25);
+  nodes.brake.setRate(0.85 + ratio * 0.3, t, 0.15);
 }
 
 // Signal (klakson) tugmasi bosib turilganda chaqiriladi; qo'yib yuborilsa false yuboriladi.
@@ -121,5 +85,5 @@ export function updateHorn(pressed) {
   if (!ctx || !nodes) return;
   if (ctx.state === 'suspended') ctx.resume();
   const t = ctx.currentTime;
-  nodes.hornGain.gain.setTargetAtTime(pressed ? 0.4 : 0, t, pressed ? 0.015 : 0.09);
+  nodes.horn.setGain(pressed ? 1.5 : 0, t, pressed ? 0.015 : 0.09);
 }

@@ -1,7 +1,9 @@
+import { makeLoop, carEngineLayers, carRpm, planeEngineLayers, planeRpm } from './sfx.js';
+
 // DEXO GTA: onlayn o'yinda BOSHQA o'yinchilarning ovozi (dvigatel va signal).
 // Uzoqlashgani sari ovoz pasayadi va xiralashadi (yumshoq filtr), signal ham shunday - lekin signal
 // dvigateldan uzoqroqdan eshitiladi. Samolyot eng baland, undan keyin vertolyot, eng past - mashina
-// (katta transportlar balandroq eshitiladi). Hammasi Web Audio API bilan kod ichida yasaladi.
+// (katta transportlar balandroq eshitiladi). Dvigatel/signal/rotor ovozlari tayyor mp3 fayllardan (sfx.js), urilish va portlash ovozlari esa kod ichida yasaladi.
 
 let ctx = null;
 let listening = false;
@@ -55,10 +57,7 @@ export function initRemoteAudio() {
 
 export function remoteAudioReady() { return !!ctx; }
 
-function startAll(list) { for (const s of list) s.start(); }
-function stopAll(list) { for (const s of list) { try { s.stop(); } catch { /* allaqachon to'xtagan */ } } }
-
-// ---- Mashina: ikkita "arra" + filtr (dvigatel) va ikki tovushli signal ----
+// ---- Mashina: tayyor mp3 dvigatel qatlamlari (sfx.js) va ikki tovushli signal ----
 function buildCar(ac, out) {
   const cfg = KIND.car;
   const engineMaster = ac.createGain();
@@ -66,112 +65,75 @@ function buildCar(ac, out) {
   engineMaster.connect(out);
   const filter = ac.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.value = 500;
-  filter.Q.value = 0.8;
+  filter.frequency.value = 3000;
   const engineGain = ac.createGain();
-  engineGain.gain.value = 0.2;
-  const osc1 = ac.createOscillator();
-  osc1.type = 'sawtooth';
-  osc1.frequency.value = 45;
-  const osc2 = ac.createOscillator();
-  osc2.type = 'sawtooth';
-  osc2.frequency.value = 67;
-  const osc2Gain = ac.createGain();
-  osc2Gain.gain.value = 0.35;
-  osc1.connect(filter);
-  osc2.connect(osc2Gain).connect(filter);
+  engineGain.gain.value = 1.2;
   filter.connect(engineGain).connect(engineMaster);
+  const engine = carEngineLayers(ac, filter);
 
   const hornMaster = ac.createGain();
   hornMaster.gain.value = 0;
   hornMaster.connect(out);
-  const hornGain = ac.createGain();
-  hornGain.gain.value = 0;
   const hornFilter = ac.createBiquadFilter();
   hornFilter.type = 'lowpass';
   hornFilter.frequency.value = 2200;
-  const h1 = ac.createOscillator();
-  h1.type = 'square';
-  h1.frequency.value = 415;
-  const h2 = ac.createOscillator();
-  h2.type = 'square';
-  h2.frequency.value = 523;
-  const h2Gain = ac.createGain();
-  h2Gain.gain.value = 0.55;
-  h1.connect(hornFilter);
-  h2.connect(h2Gain).connect(hornFilter);
-  hornFilter.connect(hornGain).connect(hornMaster);
+  hornFilter.connect(hornMaster);
+  const horn = makeLoop(ac, 'mashina-signal', hornFilter);
 
-  const sources = [osc1, osc2, h1, h2];
-  startAll(sources);
   return {
-    sources,
+    stop() { engine.stop(); horn.stop(); },
     update(t, p) {
       const near = atten(p.dist, cfg.ref, cfg.max);
-      const rpm = 42 + p.ratio * 165;
-      osc1.frequency.setTargetAtTime(rpm, t, 0.1);
-      osc2.frequency.setTargetAtTime(rpm * 1.5, t, 0.1);
+      engine.update(carRpm(p.ratio, false), t, 0.1);
       // Uzoqda dvigatel xiraroq (past chastotali) eshitiladi
-      filter.frequency.setTargetAtTime((480 + p.ratio * 2600) * (0.35 + 0.65 * Math.sqrt(near)), t, 0.15);
-      engineGain.gain.setTargetAtTime(0.2 + p.ratio * 0.28, t, 0.15);
+      filter.frequency.setTargetAtTime((2600 + p.ratio * 6000) * (0.2 + 0.8 * Math.sqrt(near)), t, 0.15);
+      engineGain.gain.setTargetAtTime(1.1 + p.ratio * 0.5, t, 0.15);
       engineMaster.gain.setTargetAtTime(near * cfg.vol, t, 0.15);
       // Signal: dvigateldan uzoqroqdan eshitiladi, lekin u ham masofa bilan pasayadi
       const hornNear = atten(p.dist, cfg.hornRef, cfg.hornMax);
       hornMaster.gain.setTargetAtTime(hornNear * cfg.hornVol, t, 0.1);
-      hornFilter.frequency.setTargetAtTime(900 + 1300 * Math.sqrt(hornNear), t, 0.1);
-      hornGain.gain.setTargetAtTime(p.horn ? 0.4 : 0, t, p.horn ? 0.015 : 0.09);
+      hornFilter.frequency.setTargetAtTime(900 + 3000 * Math.sqrt(hornNear), t, 0.1);
+      horn.setGain(p.horn ? 1.5 : 0, t, p.horn ? 0.015 : 0.09);
     },
   };
 }
 
-// ---- Vertolyot: rotorning "gurr-gurr"i + shamol ----
+// ---- Vertolyot: rotorning "tars-tars"i + turbina + shamol (tayyor mp3) ----
 function buildHeli(ac, out) {
   const cfg = KIND.heli;
   const master = ac.createGain();
   master.gain.value = 0;
   master.connect(out);
-  const carrier = ac.createOscillator();
-  carrier.type = 'sawtooth';
-  carrier.frequency.value = 70;
-  const carrierFilter = ac.createBiquadFilter();
-  carrierFilter.type = 'lowpass';
-  carrierFilter.frequency.value = 420;
-  const carrierGain = ac.createGain();
-  carrierGain.gain.value = 0.3;
-  carrier.connect(carrierFilter).connect(carrierGain).connect(master);
-  const lfo = ac.createOscillator();
-  lfo.type = 'sine';
-  lfo.frequency.value = 7;
-  const lfoDepth = ac.createGain();
-  lfoDepth.gain.value = 0.22;
-  lfo.connect(lfoDepth).connect(carrierGain.gain);
-  const wind = ac.createBufferSource();
-  wind.buffer = getNoise(ac);
-  wind.loop = true;
+  const filter = ac.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 8000;
+  filter.connect(master);
+  const rotor = makeLoop(ac, 'vertolyot-rotor', filter);
+  const motor = makeLoop(ac, 'vertolyot-motor', filter);
   const windFilter = ac.createBiquadFilter();
   windFilter.type = 'bandpass';
   windFilter.frequency.value = 900;
   windFilter.Q.value = 0.7;
-  const windGain = ac.createGain();
-  windGain.gain.value = 0;
-  wind.connect(windFilter).connect(windGain).connect(master);
+  windFilter.connect(master);
+  const wind = makeLoop(ac, 'shamol', windFilter);
 
-  const sources = [carrier, lfo, wind];
-  startAll(sources);
   return {
-    sources,
+    stop() { rotor.stop(); motor.stop(); wind.stop(); },
     update(t, p) {
       const near = atten(p.dist, cfg.ref, cfg.max);
-      carrier.frequency.setTargetAtTime(62 + p.ratio * 40, t, 0.12);
-      lfo.frequency.setTargetAtTime(6.5 + p.ratio * 2.5, t, 0.15);
-      carrierFilter.frequency.setTargetAtTime((380 + p.ratio * 500) * (0.4 + 0.6 * Math.sqrt(near)), t, 0.15);
-      windGain.gain.setTargetAtTime(Math.min(0.35, p.ratio * 0.4), t, 0.2);
+      rotor.setRate(0.92 + p.ratio * 0.2, t, 0.15);
+      motor.setRate(0.9 + p.ratio * 0.15, t, 0.15);
+      rotor.setGain(1.6 + p.ratio * 0.3, t, 0.2);
+      motor.setGain(1.1, t, 0.2);
+      wind.setGain(Math.min(1.0, p.ratio * 1.2), t, 0.2);
+      // Uzoqda yuqori tovushlar so'nadi, past "tars-tars" qoladi
+      filter.frequency.setTargetAtTime(1200 + 7000 * Math.sqrt(near), t, 0.15);
       master.gain.setTargetAtTime(near * cfg.vol, t, 0.15);
     },
   };
 }
 
-// ---- Samolyot: motor/vint g'ovullashi + tezlikda kuchayadigan shamol (eng baland) ----
+// ---- Samolyot: parrakli dvigatel (3 qatlam) + tezlikda kuchayadigan shamol (eng baland) ----
 function buildPlane(ac, out) {
   const cfg = KIND.plane;
   const master = ac.createGain();
@@ -179,43 +141,25 @@ function buildPlane(ac, out) {
   master.connect(out);
   const filter = ac.createBiquadFilter();
   filter.type = 'lowpass';
-  filter.frequency.value = 900;
-  filter.Q.value = 0.6;
+  filter.frequency.value = 4000;
   const engineGain = ac.createGain();
-  engineGain.gain.value = 0.32;
-  const osc1 = ac.createOscillator();
-  osc1.type = 'sawtooth';
-  osc1.frequency.value = 130;
-  const osc2 = ac.createOscillator();
-  osc2.type = 'sawtooth';
-  osc2.frequency.value = 131.3;
-  const osc2Gain = ac.createGain();
-  osc2Gain.gain.value = 0.5;
-  osc1.connect(filter);
-  osc2.connect(osc2Gain).connect(filter);
+  engineGain.gain.value = 1.3;
   filter.connect(engineGain).connect(master);
-  const wind = ac.createBufferSource();
-  wind.buffer = getNoise(ac);
-  wind.loop = true;
+  const engine = planeEngineLayers(ac, filter);
   const windFilter = ac.createBiquadFilter();
   windFilter.type = 'highpass';
-  windFilter.frequency.value = 1400;
-  const windGain = ac.createGain();
-  windGain.gain.value = 0;
-  wind.connect(windFilter).connect(windGain).connect(master);
+  windFilter.frequency.value = 900;
+  windFilter.connect(master);
+  const wind = makeLoop(ac, 'shamol', windFilter);
 
-  const sources = [osc1, osc2, wind];
-  startAll(sources);
   return {
-    sources,
+    stop() { engine.stop(); wind.stop(); },
     update(t, p) {
       const near = atten(p.dist, cfg.ref, cfg.max);
-      const rpm = 110 + p.ratio * 260;
-      osc1.frequency.setTargetAtTime(rpm, t, 0.1);
-      osc2.frequency.setTargetAtTime(rpm * 1.01, t, 0.1);
-      filter.frequency.setTargetAtTime((760 + p.ratio * 2200) * (0.4 + 0.6 * Math.sqrt(near)), t, 0.15);
-      engineGain.gain.setTargetAtTime(0.28 + p.ratio * 0.24, t, 0.15);
-      windGain.gain.setTargetAtTime(Math.min(0.45, p.ratio * p.ratio * 0.5), t, 0.2);
+      engine.update(planeRpm(p.ratio, false, false), t, 0.1);
+      filter.frequency.setTargetAtTime((2800 + p.ratio * 4000) * (0.25 + 0.75 * Math.sqrt(near)), t, 0.15);
+      engineGain.gain.setTargetAtTime(1.3 + p.ratio * 0.3, t, 0.15);
+      wind.setGain(Math.min(1.2, p.ratio * p.ratio * 1.5), t, 0.2);
       master.gain.setTargetAtTime(near * cfg.vol, t, 0.15);
     },
   };
@@ -246,7 +190,7 @@ export function createRemoteVoice(kind) {
       voice.update(t, { dist, ratio: Math.max(0, Math.min(1, speed / maxSpeed)), horn });
     },
     dispose() {
-      stopAll(voice.sources);
+      voice.stop();
       try { out.disconnect(); } catch { /* ok */ }
       if (panner) { try { panner.disconnect(); } catch { /* ok */ } }
     },

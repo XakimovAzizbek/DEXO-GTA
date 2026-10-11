@@ -263,10 +263,10 @@ const LIGHTNING = {
   cloudY: 150,                // bulut balandligi (m)
 };
 const THUNDER_SRC = {
-  yaqin: 'audio/chaqmoq-yaqin.mp3',
-  orta: 'audio/chaqmoq-orta.mp3',
-  uzoq: 'audio/chaqmoq-uzoq.mp3',
-  kuchli: 'audio/chaqmoq-kuchli.mp3',
+  yaqin: 'chaqmoq-yaqin.mp3',
+  orta: 'chaqmoq-orta.mp3',
+  uzoq: 'chaqmoq-uzoq.mp3',
+  kuchli: 'chaqmoq-kuchli.mp3',
 };
 const FLASH_SKY = new THREE.Color('#dfe8ff');
 const rnd = (a, b) => a + Math.random() * (b - a);
