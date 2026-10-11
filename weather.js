@@ -1,5 +1,6 @@
 // DEXO GTA: ob-havo (yomg'ir, qor, shamol, kun, tun, tutilish). Sozlamalar ob-havo.txt dan keladi (data.js: fetchWeather).
 // Hammasi o'chiq bo'lsa hech narsa yuklanmaydi va hech qaysi material o'zgarmaydi.
+// Yomg'ir yoqilgan bo'lsa chaqmoq ham chaqadi (osmonda, tog'ga, yerga, mashinaga) va gulduros ovozi chiqadi.
 import * as THREE from 'three';
 
 const WIND_ACC = 6;                     // shamolning mashinaga ta'siri (m/s^2), faqat harakatda seziladi
@@ -245,9 +246,335 @@ function makeStars(count) {
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const mix = (a, b, t) => a + (b - a) * t;
 
+// ---------- Chaqmoq (faqat yomg'ir yoqilgan bo'lsa) ----------
+// Turlari: osmonda chiziq-chiziq chaqmoq, yerga tushadigan chaqmoq (tog' cho'qqilariga ko'proq), mashinaga tushadigan chaqmoq.
+// Mashinaga tushsa onCarStrike() chaqiriladi (game.js ulovni o'rtacha pachoqlaydi).
+const LIGHTNING = {
+  firstDelay: [4, 9],         // boshlanishdan birinchi chaqmoqqacha (soniya)
+  gap: [7, 22],               // chaqmoqlar orasidagi vaqt (soniya) - "ora-orada"
+  quickFollowChance: 0.2,     // ketma-ket tez ikkinchi chaqmoq ehtimoli
+  strongChance: 0.25,         // kuchli chaqmoq ehtimoli
+  groundChance: 0.6,          // yerga tushish ehtimoli (qolgani osmonda chiziq-chiziq)
+  mountainChance: 0.7,        // yerga tushganda tog'ga tushish ehtimoli (tog' yaqinda bo'lsa)
+  mountainRange: 480,         // shu masofadagi (m) tog'lar nishon bo'ladi
+  carChance: 0.12,            // yerga tushadigan chaqmoqning mashinaga tushish ehtimoli
+  carCooldown: 40,            // mashinaga ikki marta tushish orasidagi eng kam vaqt (soniya)
+  carHitRadius: 5,            // mashinadan shu masofada (m) yerga tushsa ham mashinaga tekkan hisoblanadi
+  cloudY: 150,                // bulut balandligi (m)
+};
+const THUNDER_SRC = {
+  yaqin: 'audio/chaqmoq-yaqin.mp3',
+  orta: 'audio/chaqmoq-orta.mp3',
+  uzoq: 'audio/chaqmoq-uzoq.mp3',
+  kuchli: 'audio/chaqmoq-kuchli.mp3',
+};
+const FLASH_SKY = new THREE.Color('#dfe8ff');
+const rnd = (a, b) => a + Math.random() * (b - a);
+const pickRange = (r) => rnd(r[0], r[1]);
+
+// Chaqmoq ovozi: audio fayllar bir marta yuklanadi, masofaga qarab past chastotali filtr bilan bo'g'iladi.
+function createThunderAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return { play() {} };
+  let ctx = null;
+  const buffers = {};
+  try { ctx = new AC(); } catch { return { play() {} }; }
+  const resume = () => {
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    else for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.removeEventListener(ev, resume);
+  };
+  for (const ev of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(ev, resume);
+  for (const [name, src] of Object.entries(THUNDER_SRC)) {
+    fetch(src).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(src))))
+      .then((data) => new Promise((ok, fail) => ctx.decodeAudioData(data, ok, fail)))
+      .then((buf) => { buffers[name] = buf; })
+      .catch((err) => console.warn('Chaqmoq ovozi yuklanmadi:', err));
+  }
+  return {
+    play(name, volume, dist) {
+      const buf = buffers[name];
+      if (!buf || ctx.state !== 'running') return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = rnd(0.92, 1.08);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = Math.max(1500, Math.min(16000, 16000 - dist * 45));   // uzoqda yuqori tovushlar so'nadi
+      const gain = ctx.createGain();
+      gain.gain.value = Math.max(0, Math.min(1, volume));
+      src.connect(lp); lp.connect(gain); gain.connect(ctx.destination);
+      src.start();
+    },
+  };
+}
+
+// Yirtiq (zig-zag) chiziq: o'rta nuqtani tasodifiy siljitib bo'lib boramiz.
+const _d = new THREE.Vector3(), _r = new THREE.Vector3(), _s = new THREE.Vector3(), _t = new THREE.Vector3();
+function jag(a, b, levels, disp) {
+  let pts = [a.clone(), b.clone()];
+  for (let l = 0; l < levels; l++) {
+    const out = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p = pts[i], q = pts[i + 1];
+      const m = p.clone().add(q).multiplyScalar(0.5);
+      _d.subVectors(q, p).normalize();
+      _r.set(rnd(-1, 1), rnd(-1, 1), rnd(-1, 1));
+      _r.addScaledVector(_d, -_r.dot(_d));
+      m.addScaledVector(_r, disp);
+      out.push(m, q);
+    }
+    pts = out;
+    disp *= 0.55;
+  }
+  return pts;
+}
+
+// Chiziqni kameraga qaragan tasma (ribbon) qilib geometriya massiviga qo'shadi.
+function addRibbon(store, pts, width, taper, camPos) {
+  const n = pts.length;
+  const base = store.pos.length / 3;
+  for (let i = 0; i < n; i++) {
+    _t.subVectors(pts[Math.min(i + 1, n - 1)], pts[Math.max(i - 1, 0)]).normalize();
+    _s.subVectors(camPos, pts[i]);
+    _s.crossVectors(_t, _s);
+    if (_s.lengthSq() < 1e-8) _s.set(1, 0, 0); else _s.normalize();
+    const k = width * (1 - taper * (i / (n - 1))) * 0.5;
+    store.pos.push(pts[i].x + _s.x * k, pts[i].y + _s.y * k, pts[i].z + _s.z * k,
+      pts[i].x - _s.x * k, pts[i].y - _s.y * k, pts[i].z - _s.z * k);
+  }
+  for (let i = 0; i < n - 1; i++) {
+    const a = base + i * 2;
+    store.idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+}
+function ribbonMesh(store, color, opacity) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(store.pos, 3));
+  geo.setIndex(store.idx);
+  const mat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, depthWrite: false, fog: false,
+    side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 6;
+  return mesh;
+}
+
+function glowTexture() {
+  return canvasTexture((g, s) => {
+    const h = s / 2;
+    const grad = g.createRadialGradient(h, h, 0, h, h, h);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.18, 'rgba(225,235,255,0.75)');
+    grad.addColorStop(0.5, 'rgba(160,180,255,0.22)');
+    grad.addColorStop(1, 'rgba(160,180,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+  }, 128);
+}
+
+function createLightning({ scene, camera, quality, mountains, onCarStrike }) {
+  const audio = createThunderAudio();
+  const glowTex = glowTexture();
+  const lowQ = quality === 'low';
+  const levels = lowQ ? 4 : 5;
+  const events = [];          // ko'rinib turgan chaqmoqlar
+  const thunder = [];         // kechikib keladigan gulduros ovozlar (yorug'lik tezroq, ovoz sekinroq keladi)
+  let timer = pickRange(LIGHTNING.firstDelay);
+  let carCd = 0;
+  let clock = 0;
+  const out = { flash: 0, update, strike };
+  const camPos = new THREE.Vector3(), camDir = new THREE.Vector3();
+
+  function queueThunder(delay, name, vol, dist) { thunder.push({ t: delay, name, vol, dist }); }
+
+  function thunderFor(dist, power, sky, car) {
+    const vol = Math.max(0.25, Math.min(1, 1.05 - dist / 700)) * (0.55 + 0.45 * power);
+    let name;
+    if (car) name = 'kuchli';
+    else if (dist < 70 && !sky) name = power > 0.7 ? 'kuchli' : 'yaqin';
+    else if (dist < 220) name = power > 0.75 ? 'kuchli' : 'orta';
+    else name = power > 0.85 ? 'orta' : 'uzoq';
+    queueThunder(car ? 0.05 : dist / 343, name, car ? 1 : vol, dist);
+    if (power > 0.75 && !car && Math.random() < 0.6) queueThunder(dist / 343 + rnd(1.6, 3.2), 'uzoq', vol * 0.5, dist + 150);
+  }
+
+  // Shoxlar: asosiy chiziqdan yon tomonga ketadigan kichik chaqmoqlar.
+  function branches(main, count, width, mainLen, downBias, store, core) {
+    for (let k = 0; k < count; k++) {
+      const i = Math.floor(rnd(0.12, 0.8) * (main.length - 1));
+      const s = main[i];
+      const dir = new THREE.Vector3(rnd(-1, 1), 0, rnd(-1, 1)).normalize().multiplyScalar(0.9);
+      dir.y = -downBias + rnd(-0.25, 0.25);
+      dir.normalize();
+      const len = mainLen * rnd(0.12, 0.3);
+      const e = s.clone().addScaledVector(dir, len);
+      if (e.y < 0.2) e.y = 0.2;
+      const path = jag(s, e, 3, len * 0.18);
+      addRibbon(store.core, path, width * 0.45, 0.9, camPos);
+      addRibbon(store.glow, path, width * 2.2, 0.9, camPos);
+    }
+  }
+
+  function buildBolt(start, end, width, power, downBias) {
+    const store = { core: { pos: [], idx: [] }, glow: { pos: [], idx: [] } };
+    const len = start.distanceTo(end);
+    const main = jag(start, end, levels, len * 0.1);
+    if (end.y <= 1) for (const p of main) if (p.y < 0.1) p.y = 0.1;
+    addRibbon(store.core, main, width, 0.55, camPos);
+    addRibbon(store.glow, main, width * 4.5, 0.55, camPos);
+    const nb = Math.round((2 + power * 3) * (lowQ ? 0.5 : 1));
+    branches(main, nb, width, len, downBias, store);
+    const core = ribbonMesh(store.core, 0xffffff, 1);
+    const glow = ribbonMesh(store.glow, 0x9fb4ff, 0.35);
+    const group = new THREE.Group();
+    group.add(glow, core);
+    scene.add(group);
+    return { group, core, glow };
+  }
+
+  function addEvent(ev) {
+    ev.t = 0;
+    // Bir necha marta yaltirab chaqadi (asosiy zarba + qayta zarbalar)
+    ev.pulses = ev.power > 0.7 ? [0, 0.09, 0.21, 0.34] : [0, 0.1, 0.22];
+    ev.life = ev.pulses[ev.pulses.length - 1] + 0.3;
+    events.push(ev);
+  }
+
+  function makeGlow(pos, size) {
+    const mat = new THREE.SpriteMaterial({
+      map: glowTex, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
+    });
+    const sp = new THREE.Sprite(mat);
+    sp.scale.set(size, size, 1);
+    sp.position.copy(pos);
+    sp.renderOrder = 7;
+    scene.add(sp);
+    return sp;
+  }
+
+  // Osmonda chiziq-chiziq chaqmoq (yerga tushmaydi)
+  function skyStrike(power) {
+    camera.getWorldDirection(camDir);
+    const yaw = Math.atan2(camDir.x, camDir.z) + rnd(-0.9, 0.9);
+    const D = rnd(150, 380);
+    const cx = camPos.x + Math.sin(yaw) * D, cz = camPos.z + Math.cos(yaw) * D;
+    const cy = rnd(110, 170);
+    const sheet = Math.random() < 0.3;                      // ba'zan faqat bulut ichi yaltiraydi (chiziqsiz)
+    const flashK = (sheet ? 0.45 : 0.6) * (0.6 + 0.4 * power);
+    thunderFor(D, power, true, false);
+    if (sheet) {
+      addEvent({ power, flashK, glow: makeGlow(new THREE.Vector3(cx, cy, cz), rnd(220, 340)), glowOp: 0.8 });
+      return;
+    }
+    const L = rnd(70, 190);
+    const ang = yaw + Math.PI / 2 + rnd(-0.6, 0.6);
+    const tx = Math.sin(ang), tz = Math.cos(ang);
+    const a = new THREE.Vector3(cx - tx * L / 2, cy + rnd(-20, 25), cz - tz * L / 2);
+    const b = new THREE.Vector3(cx + tx * L / 2, cy + rnd(-30, 20), cz + tz * L / 2);
+    const w = Math.max(0.5, Math.min(2.2, D * 0.0045 * (0.8 + power * 0.6)));
+    const bolt = buildBolt(a, b, w, power + 0.3, 0.3);
+    addEvent({ power, flashK, bolt });
+  }
+
+  // Yerga (tog' cho'qqisiga, mashinaga yoki oddiy joyga) tushadigan chaqmoq
+  function groundStrike(power, forceCar) {
+    const car = out._car;
+    const carOk = !!car && out._mode === 'car';
+    let target = null, isCar = false;
+    if ((forceCar || (clock > carCd && Math.random() < LIGHTNING.carChance)) && carOk) {
+      target = new THREE.Vector3(car.x, car.y + 1.5, car.z);
+      isCar = true;
+    }
+    if (!target) {
+      const near = [];
+      let sum = 0;
+      for (const m of mountains) {
+        const d = Math.hypot(m.x - camPos.x, m.z - camPos.z);
+        if (d > LIGHTNING.mountainRange) continue;
+        const wgt = 1 / (60 + d);                            // yaqin tog'larga ko'proq tushadi
+        near.push({ m, wgt }); sum += wgt;
+      }
+      if (near.length && Math.random() < LIGHTNING.mountainChance) {
+        let r = Math.random() * sum, pick = near[0].m;
+        for (const n of near) { r -= n.wgt; if (r <= 0) { pick = n.m; break; } }
+        target = new THREE.Vector3(pick.x + rnd(-2.5, 2.5), pick.top * 0.93, pick.z + rnd(-2.5, 2.5));
+      } else {
+        camera.getWorldDirection(camDir);
+        const yaw = Math.random() < 0.6 ? Math.atan2(camDir.x, camDir.z) + rnd(-0.8, 0.8) : rnd(0, Math.PI * 2);
+        const D = rnd(35, 280);
+        target = new THREE.Vector3(camPos.x + Math.sin(yaw) * D, 0, camPos.z + Math.cos(yaw) * D);
+      }
+      // Tasodifan mashina yoniga tushsa ham mashinaga tekkan hisoblanadi
+      if (carOk && Math.hypot(target.x - car.x, target.z - car.z) < LIGHTNING.carHitRadius) {
+        target.set(car.x, car.y + 1.5, car.z);
+        isCar = true;
+      }
+    }
+    if (isCar) { power = 1; carCd = clock + LIGHTNING.carCooldown; }
+    const dist = Math.hypot(target.x - camPos.x, target.y - camPos.y, target.z - camPos.z);
+    const start = new THREE.Vector3(target.x + rnd(-40, 40), LIGHTNING.cloudY + rnd(-15, 25), target.z + rnd(-40, 40));
+    const w = Math.max(0.35, Math.min(2.4, dist * 0.0045 * (0.8 + power * 0.6))) * (isCar ? 1.3 : 1);
+    const bolt = buildBolt(start, target, w, power, 0.4);
+    const flashK = isCar ? 1 : Math.max(0.35, Math.min(1, 1.1 - dist / 450)) * (0.55 + 0.45 * power);
+    addEvent({ power, flashK, bolt, glow: makeGlow(target, (isCar ? 22 : 10 + power * 12)), glowOp: 1 });
+    thunderFor(dist, power, false, isCar);
+    if (isCar && onCarStrike) onCarStrike();
+  }
+
+  // kind: 'sky' | 'ground' | 'car' (sinash uchun), bo'sh bo'lsa tasodifiy
+  function strike(kind) {
+    camPos.copy(camera.position);
+    const power = Math.random() < LIGHTNING.strongChance ? rnd(0.8, 1) : rnd(0.3, 0.7);
+    if (kind === 'car') groundStrike(1, true);
+    else if (kind === 'sky') skyStrike(power);
+    else if (kind === 'ground') groundStrike(power, false);
+    else if (Math.random() < LIGHTNING.groundChance) groundStrike(power, false);
+    else skyStrike(power);
+  }
+
+  function removeEvent(ev) {
+    if (ev.bolt) {
+      scene.remove(ev.bolt.group);
+      for (const m of [ev.bolt.core, ev.bolt.glow]) { m.geometry.dispose(); m.material.dispose(); }
+    }
+    if (ev.glow) { scene.remove(ev.glow); ev.glow.material.dispose(); }
+  }
+
+  function update(dt) {
+    clock += dt;
+    camPos.copy(camera.position);
+    timer -= dt;
+    if (timer <= 0) {
+      strike();
+      timer = Math.random() < LIGHTNING.quickFollowChance ? rnd(0.8, 3) : pickRange(LIGHTNING.gap);
+    }
+    for (let i = thunder.length - 1; i >= 0; i--) {
+      const th = thunder[i];
+      th.t -= dt;
+      if (th.t <= 0) { audio.play(th.name, th.vol, th.dist); thunder.splice(i, 1); }
+    }
+    let flash = 0;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      ev.t += dt;
+      if (ev.t >= ev.life) { removeEvent(ev); events.splice(i, 1); continue; }
+      let I = 0;
+      for (const p of ev.pulses) if (ev.t >= p) I += Math.exp(-(ev.t - p) / 0.055);
+      I = Math.min(1, I);
+      if (ev.bolt) { ev.bolt.core.material.opacity = I; ev.bolt.glow.material.opacity = 0.35 * I; }
+      if (ev.glow) ev.glow.material.opacity = (ev.glowOp || 1) * I;
+      flash = Math.max(flash, I * ev.flashK);
+    }
+    out.flash = flash;
+  }
+  return out;
+}
+
 // config = { rain, snow, wind, day, night } (true/false).
 // Qaytaradi: { enabled, mode: 'day'|'night'|'eclipse', night, wind:{x,z}, patch(mat, opts), update(dt) }
-export function createWeather({ scene, camera, renderer, quality, config, hemi, sun }) {
+export function createWeather({ scene, camera, renderer, quality, config, hemi, sun, mountains = [], onCarStrike = null }) {
   const rainOn = !!config.rain, snowOn = !!config.snow, windOn = !!config.wind;
   const mode = config.night && config.day ? 'eclipse' : config.night ? 'night' : 'day';
   const precip = rainOn || snowOn;
@@ -267,6 +594,7 @@ export function createWeather({ scene, camera, renderer, quality, config, hemi, 
   const cur = { sky: new C(), hemiC: new C(), hemiG: new C(), sunC: new C() };
   const gray = new C();
   let bright = 1;                            // yomg'ir/qor zarralarining yorqinligi (tunda kamayadi)
+  let moodHemi = 1, moodSun = 1;             // chaqmoq yaltirashidan oldingi asosiy yorug'lik
 
   function applyMood(cov) {
     const dark = mode === 'night' ? 1 : mode === 'eclipse' ? Math.pow(cov, 0.8) * 0.88 : 0;
@@ -299,6 +627,7 @@ export function createWeather({ scene, camera, renderer, quality, config, hemi, 
     scene.fog.near = near; scene.fog.far = far;
     hemi.color.copy(cur.hemiC); hemi.groundColor.copy(cur.hemiG); hemi.intensity = hemiI;
     sun.color.copy(cur.sunC); sun.intensity = sunI;
+    moodHemi = hemiI; moodSun = sunI;
     bright = 1 - 0.55 * dark;
     return dark;
   }
@@ -350,7 +679,19 @@ export function createWeather({ scene, camera, renderer, quality, config, hemi, 
   const rainVel = new THREE.Vector3(), snowVel = new THREE.Vector3();
   let t = 0;
 
-  function update(dt) {
+  // Chaqmoq: faqat yomg'ir bo'lsa
+  const storm = rainOn ? createLightning({ scene, camera, quality, mountains, onCarStrike }) : null;
+  const flashCol = new THREE.Color();
+  let flashing = false;
+  function applyFlash(f) {                   // chaqmoq yaltiraganda osmon va yorug'lik birdan yorishadi
+    hemi.intensity = moodHemi + 2.1 * f;
+    sun.intensity = moodSun + 1.3 * f;
+    flashCol.copy(cur.sky).lerp(FLASH_SKY, Math.min(1, 0.6 * f));
+    scene.background.copy(flashCol);
+    scene.fog.color.copy(flashCol);
+  }
+
+  function update(dt, car, vehicleMode) {
     t += dt;
     U.uTime.value = t;
     const gust = windOn
@@ -383,6 +724,13 @@ export function createWeather({ scene, camera, renderer, quality, config, hemi, 
     }
     rainU.uBright.value = snowU.uBright.value = bright;
 
+    if (storm) {
+      storm._car = car; storm._mode = vehicleMode;
+      storm.update(dt);
+      const f = storm.flash;
+      if (f > 0.002 || flashing) { applyFlash(f); flashing = f > 0.002; }
+    }
+
     if (rain) {
       rainVel.set(WIND_DIR.x * gust * 6, -24, WIND_DIR.z * gust * 6);
       rainU.uOffset.value.addScaledVector(rainVel, dt);
@@ -399,6 +747,7 @@ export function createWeather({ scene, camera, renderer, quality, config, hemi, 
 
   return {
     enabled: true, mode, night: mode !== 'day', wind, update,
+    strike: storm ? (kind) => storm.strike(kind) : () => {},     // sinash uchun: strike('sky' | 'ground' | 'car')
     patch: (precip || windOn) ? patchMaterial : () => {},       // faqat kun/tun bo'lsa materiallar o'zgarmaydi
   };
 }

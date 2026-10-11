@@ -76,7 +76,14 @@ if (shadowsOn) {
 scene.add(sun, sun.target);
 
 // ---------- Ob-havo ----------
-const weather = createWeather({ scene, camera, renderer, quality, config: weatherConfig, hemi, sun });
+// Chaqmoq nishon qiladigan tog'lar (cho'qqisining balandligi bilan)
+const MOUNTAIN_TOP = { mountain_big: 60, mountain_small: 30 };
+const lightningMountains = objects.filter((o) => MOUNTAIN_TOP[o.t])
+  .map((o) => ({ x: o.x, z: o.z, top: MOUNTAIN_TOP[o.t] * (o.s || 1) }));
+const weather = createWeather({
+  scene, camera, renderer, quality, config: weatherConfig, hemi, sun,
+  mountains: lightningMountains, onCarStrike: () => lightningHitCar(),
+});
 const SNOW_MAX = { road: 0.3, ramp: 0.3, land: 0.5, billboard: 0.8 };
 
 // ---------- Yer ----------
@@ -1295,7 +1302,7 @@ function frame(now) {
     rocketSystem.update(dt);
     updateRocketMounts(now);
     updateBotWrecks(now);
-    weather.update(dt);
+    weather.update(dt, car, vehicleMode);
   }
 
   renderer.render(scene, camera);
@@ -1869,6 +1876,26 @@ function splashMyVehicle(hit, r) {
   const hd = Math.hypot(dx, dz) || 1;
   car.vx += (dx / hd) * k; car.vz += (dz / hd) * k;
   if (direct) { const keep = heavy ? 0.1 : 0.35; car.vx *= keep; car.vz *= keep; }
+}
+
+// Chaqmoq mashinaning ustiga tushsa: tom va old/orqa tomi o'rtacha pachoqlanadi (boshqa o'yinchilarga ham ko'rinadi).
+function lightningHitCar() {
+  if (vehicleMode !== 'car') return;
+  const dims = localDims(vehicleMode);
+  const root = localRoot(vehicleMode);
+  if (!dims || !root) return;
+  const mb = bodyFrom(dims, vehicleMode);
+  const list = crashDents[vehicleMode];
+  const top = mb.minY + (mb.maxY - mb.minY) * 0.85;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  for (const [x, y, z] of [[0, top, 0], [0, top, mb.hd * 0.45], [0, top, -mb.hd * 0.4]]) {
+    if (list.length >= MAX_DENTS) break;
+    const dent = { x: r1(x), y: r1(y), z: r1(z), s: 6 };
+    list.push(dent);
+    applyDent(root, dent, { dims, skip: localSkip(vehicleMode) });
+  }
+  playCrashSound(7, 0, 0);
+  localCrashSoundAt = performance.now();
 }
 
 // Ulovni pachoqlaydi: level 3 = to'liq pachoq (7 joyi eng kuchli), 2 = kuchli, 1 = o'rtacha.
