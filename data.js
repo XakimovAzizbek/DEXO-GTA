@@ -312,6 +312,7 @@ export const CATALOG = {
   shop:          { label: 'Do‘kon',            group: 'Uylar',     kind: 'house', hw: 6,  hd: 4.5 },
   tower:         { label: 'Baland bino',       group: 'Uylar',     kind: 'house', hw: 7,  hd: 7 },
   house_glb:     { label: 'GLB uy',            group: 'Uylar',     kind: 'house', hw: 5,  hd: 5, glb: true },   // home-glb.txt dagi GLB uy (model fayli: o.m)
+  model_glb:     { label: 'GLB model',         group: 'Modellar',  kind: 'house', hw: 5,  hd: 5, glb: true },   // modellar.txt dagi GLB model (fayl: o.m, k: 0 bo'lsa to'qnashuvsiz)
   tree_pine:     { label: 'Archa',             group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   tree_round:    { label: 'Bargli daraxt',     group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   road_straight: { label: 'Yo‘l',              group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 12 },
@@ -332,7 +333,7 @@ export const CATALOG = {
   route_point:   { label: 'Marshrut nuqtasi',  group: 'Marshrut',  kind: 'route' },
   spawn:         { label: 'Boshlanish nuqtasi', group: 'Belgi',    kind: 'spawn' },
 };
-export const GROUPS = ['Uylar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Rampa', 'Reklama', 'Marshrut', 'Belgi'];
+export const GROUPS = ['Uylar', 'Modellar', 'Daraxtlar', 'Tabiat', 'Yer', 'Yo‘llar', 'Rampa', 'Reklama', 'Marshrut', 'Belgi'];
 
 // Har bir obyektga tasodifiy och rang berish uchun (asl ranglarga ko'paytiriladi).
 export const TINTS = {
@@ -362,7 +363,7 @@ export function isValidZone(z) {
 }
 
 // GLB uylar: kattalik (s) va balandlik (y, metr) chegaralari. s = 1 bo'lganda uyning eng uzun tomoni `size` metr bo'ladi.
-export const GLB_HOUSE = { size: 10, sMin: 0.1, sMax: 12, yMin: -10, yMax: 60, yStep: 0.5 };
+export const GLB_HOUSE = { size: 10, sMin: 0.05, sMax: 40, yMin: -10, yMax: 60, yStep: 0.5 };
 
 export const RAMP_STEP = 3;
 export const RAMP_MAX = 30;
@@ -435,6 +436,7 @@ export function normalizeObject(o) {
     // GLB uy: model fayli (m), balandligi (y, metr), model o'lchamidan olingan yarim eni/bo'yi (w, d: s = 1 da)
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
     out.m = String(o.m || '').slice(0, 120);
+    if (o.k === 0 || o.k === false || o.k === '0') out.k = 0;   // k: 0 - to'qnashuvsiz model (asfalt, qir kabi yassi narsalar)
     out.s = clamp(out.s, GLB_HOUSE.sMin, GLB_HOUSE.sMax);
     const y = Number(o.y);
     out.y = Number.isFinite(y) ? clamp(Math.round(y * 10) / 10, GLB_HOUSE.yMin, GLB_HOUSE.yMax) : 0;
@@ -752,7 +754,7 @@ export function makeFootprint(o) {
   const hw = (o.w || def.hw) * o.s, hd = (o.d || def.hd) * o.s;   // GLB uyda w/d model o'lchamidan keladi
   const reach = Math.hypot(hw, hd) + 3;
   return {
-    shape: 'box', solid: def.kind === 'house' || def.kind === 'billboard' || def.kind === 'ridge', x: o.x, z: o.z, hw, hd,
+    shape: 'box', solid: (def.kind === 'house' || def.kind === 'billboard' || def.kind === 'ridge') && o.k !== 0, x: o.x, z: o.z, hw, hd,
     cos: Math.cos(o.r), sin: Math.sin(o.r), reach2: reach * reach,
   };
 }

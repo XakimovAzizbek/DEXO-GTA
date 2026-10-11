@@ -158,27 +158,30 @@ function updateStatus() {
   $('undo').disabled = undoStack.length === 0;
 }
 
-// ---------- GLB uylar (home-glb.txt) ----------
+// ---------- GLB uylar (home-glb.txt) va GLB modellar (modellar.txt) ----------
 // home-glb.txt formati:  name: uy   va   glb: home-v2.glb   (bir nechta uy bo'lsa ketma-ket yoziladi).
 // GLB uy zonaga { t: 'house_glb', m: <glb fayl>, s: kattalik, y: balandlik (m), w/d: yarim eni/bo'yi } bo'lib saqlanadi.
 let houseList = [];            // [{ name, file }]
-let currentHouse = null;       // palitradan tanlangan GLB uy fayli
+let currentHouse = null;       // palitradan tanlangan GLB uy/model fayli
+let currentSolid = true;       // tanlangan model to'qnashuvli (qattiq) mi
+let modelList = [];            // modellar.txt: [{ name, file, solid }]
 let glbDragMode = 'move';      // 'move' | 'size' | 'height': barmoq bilan nimani surish
 const houseModels = new Map(); // fayl -> Promise<{ root, w, d }>
 let houseLoaderPromise = null;
 
 function parseHouseList(text) {
   const clean = String(text).split(/\r?\n/).filter((l) => !l.trim().startsWith('#')).join('\n');
-  const parts = clean.split(/\b(name|glb)\s*:\s*/i);
+  const parts = clean.split(/\b(name|glb|solid)\s*:\s*/i);
   const list = [];
   let cur = null;
   for (let i = 1; i < parts.length; i += 2) {
     const key = parts[i].toLowerCase();
     const val = (parts[i + 1] || '').trim();
     if (!val) continue;
-    if (key === 'name') { cur = { name: val, file: '' }; list.push(cur); }
+    if (key === 'name') { cur = { name: val, file: '', solid: true }; list.push(cur); }
+    else if (key === 'solid') { if (cur) cur.solid = !/^(no|yo.?q|false|0|off)$/i.test(val); }   // solid: yo'q  -> mashina o'tib ketadi
     else {
-      if (!cur || cur.file) { cur = { name: val.replace(/\.glb$/i, ''), file: '' }; list.push(cur); }
+      if (!cur || cur.file) { cur = { name: val.replace(/\.glb$/i, ''), file: '', solid: true }; list.push(cur); }
       cur.file = val;
     }
   }
@@ -269,7 +272,7 @@ function attachHouse(entry) {
     console.warn('GLB uy yuklanmadi:', file, err);
     const ph = entry.mesh.userData.placeholder;
     if (ph) ph.material.color.set('#d9534f');
-    toast(`Uy modeli topilmadi: ${file}`, 3500);
+    toast(`Model topilmadi: ${file}`, 3500);
   });
 }
 
@@ -365,7 +368,7 @@ function updateSelInfo() {
   const isBend = !!entry && isBendable(entry.data.t);
   const bendLabel = (b) => (b < 0 ? 'chapga' : b > 0 ? 'o‘ngga' : 'to‘g‘ri');
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isGlb ? `, balandlik ${(entry.data.y || 0).toFixed(1)} m` : ''}${isBend ? `, burilish: ${bendLabel(entry.data.bend || 0)}` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
+    ? `${isGlb && entry.data.m ? entry.data.m : CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isGlb ? `, balandlik ${(entry.data.y || 0).toFixed(1)} m` : ''}${isBend ? `, burilish: ${bendLabel(entry.data.bend || 0)}` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
   const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
@@ -425,7 +428,7 @@ function placeAt(x, z) {
   const def = CATALOG[currentType];
   const isTree = def.kind === 'tree';
   const isNature = isTree || def.kind === 'mountain';
-  if (def.glb && !currentHouse) { toast('Avval ro‘yxatdan GLB uyni tanlang'); return; }
+  if (def.glb && !currentHouse) { toast('Avval ro‘yxatdan GLB model yoki uyni tanlang'); return; }
   pushUndo();
   if (currentType === 'spawn') {
     const old = entries.find((e) => e.data.t === 'spawn');
@@ -440,7 +443,7 @@ function placeAt(x, z) {
     c: currentType === 'billboard' ? 0 : randomTint(currentType),
     y: placeLevel,
     bend: isBendable(currentType) ? placeBend : 0,
-    ...(def.glb ? { m: currentHouse } : {}),
+    ...(def.glb ? { m: currentHouse, ...(currentType === 'model_glb' && !currentSolid ? { k: 0 } : {}) } : {}),
   }));
   scheduleSave();
 }
@@ -448,7 +451,7 @@ function placeAt(x, z) {
 // Palitra
 const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', route: '#ff5252', spawn: '#ffc933', traffic_light: '#22262e' };
 const palette = $('palette');
-let glbSlot = null;
+let glbSlot = null, modelSlot = null;
 for (const group of GROUPS) {
   const label = document.createElement('span');
   label.className = 'group-label';
@@ -470,39 +473,56 @@ for (const group of GROUPS) {
     palette.append(btn);
   }
   if (group === 'Uylar') { glbSlot = document.createElement('span'); glbSlot.style.display = 'contents'; palette.append(glbSlot); }
+  if (group === 'Modellar') { modelSlot = document.createElement('span'); modelSlot.style.display = 'contents'; palette.append(modelSlot); }
 }
 function markActiveChip() {
-  palette.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', c.dataset.glb ? (currentType === 'house_glb' && c.dataset.glb === currentHouse) : c.dataset.type === currentType));
+  palette.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', c.dataset.glb ? (currentType === c.dataset.type && c.dataset.glb === currentHouse) : c.dataset.type === currentType));
 }
-// home-glb.txt dagi uylarni palitraga qo'shish
-function addHouseChips() {
-  if (!glbSlot) return;
-  glbSlot.textContent = '';
-  for (const h of houseList) {
+// home-glb.txt dagi uylarni va modellar.txt dagi modellarni palitraga qo'shish
+function addGlbChips(slot, list, type, suffix) {
+  if (!slot) return;
+  slot.textContent = '';
+  for (const h of list) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chip';
-    btn.dataset.type = 'house_glb';
+    btn.dataset.type = type;
     btn.dataset.glb = h.file;
     const swatch = document.createElement('i');
     swatch.style.background = '#e9dcc3';
     swatch.style.borderColor = '#ffc933';
     const text = document.createElement('span');
-    text.textContent = `${h.name} (GLB)`;
+    text.textContent = `${h.name}${suffix}`;
     btn.append(swatch, text);
     btn.addEventListener('click', () => {
-      currentType = 'house_glb'; currentHouse = h.file; markActiveChip(); updatePlaceBendUI();
-      loadHouseModel(h.file).catch(() => toast(`Uy modeli topilmadi: ${h.file}`, 3500));   // oldindan yuklab qo'yamiz
+      currentType = type; currentHouse = h.file; currentSolid = h.solid !== false;
+      markActiveChip(); updatePlaceBendUI();
+      loadHouseModel(h.file).catch(() => toast(`Model topilmadi: ${h.file}`, 3500));   // oldindan yuklab qo'yamiz
     });
-    glbSlot.append(btn);
+    slot.append(btn);
   }
   markActiveChip();
 }
+const addHouseChips = () => addGlbChips(glbSlot, houseList, 'house_glb', ' (GLB)');
+const addModelChips = () => addGlbChips(modelSlot, modelList, 'model_glb', '');
 fetch('home-glb.txt', { cache: 'no-store' })
   .then((r) => (r.ok ? r.text() : ''))
   .then((t) => { houseList = parseHouseList(t); })
   .catch(() => { houseList = []; })
   .then(() => addHouseChips());
+fetch('modellar.txt', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.text() : ''))
+  .then((t) => { modelList = parseHouseList(t); })
+  .catch(() => { modelList = []; })
+  .then(() => {
+    addModelChips();
+    if (!modelList.length && modelSlot) {
+      const hint = document.createElement('span');
+      hint.className = 'hint';
+      hint.textContent = 'modellar.txt topilmadi yoki bo‘sh';
+      modelSlot.append(hint);
+    }
+  });
 markActiveChip();
 
 $('placeLevel').addEventListener('click', () => {
@@ -1160,6 +1180,9 @@ function updateGlbPanel(entry, isGlb) {
   $('glbHeight').value = String(d.y || 0);
   $('glbSizeOut').textContent = `×${d.s.toFixed(2)} (${(2 * (d.w || 5) * d.s).toFixed(1)} × ${(2 * (d.d || 5) * d.s).toFixed(1)} m)`;
   $('glbHeightOut').textContent = `${(d.y || 0).toFixed(1)} m`;
+  const deg = Math.round((((d.r * 180) / Math.PI) % 360 + 360) % 360);
+  $('glbRot').value = String(deg);
+  $('glbRotOut').textContent = `${deg}°`;
   panel.querySelectorAll('[data-glbmode]').forEach((b) => b.classList.toggle('is-active', b.dataset.glbmode === glbDragMode));
   $('glbModeHint').textContent = GLB_MODE_HINT[glbDragMode];
 }
@@ -1176,6 +1199,10 @@ const glbClampS = (v) => Math.min(GLB_HOUSE.sMax, Math.max(GLB_HOUSE.sMin, Math.
 const glbClampY = (v) => Math.min(GLB_HOUSE.yMax, Math.max(GLB_HOUSE.yMin, Math.round(v * 10) / 10));
 $('glbSize').addEventListener('input', () => glbApply((e) => { e.data.s = glbClampS(Number($('glbSize').value) / 100); }, true));
 $('glbHeight').addEventListener('input', () => glbApply((e) => { e.data.y = glbClampY(Number($('glbHeight').value)); }, true));
+$('glbRot').addEventListener('input', () => glbApply((e) => { e.data.r = (Number($('glbRot').value) * Math.PI) / 180; }, true));
+$('glbRot').addEventListener('change', () => { glbSliderPushed = false; });
+$('glbRotMinus').addEventListener('click', () => glbApply((e) => { e.data.r -= Math.PI / 36; }));   // 5° chapga
+$('glbRotPlus').addEventListener('click', () => glbApply((e) => { e.data.r += Math.PI / 36; }));    // 5° o'ngga
 $('glbSize').addEventListener('change', () => { glbSliderPushed = false; });
 $('glbHeight').addEventListener('change', () => { glbSliderPushed = false; });
 $('glbSizeMinus').addEventListener('click', () => glbApply((e) => { e.data.s = glbClampS(e.data.s / 1.05); }));
