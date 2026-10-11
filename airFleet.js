@@ -24,6 +24,7 @@ export const AIR_TYPES = {
 export const AIR_MAX_POINTS = 60;
 export const AIR_MAX_PATHS = Infinity;   // yo'llar soni cheksiz (botlar soni o'yinda AIR_BOT_LIMIT bilan cheklanadi)
 export const AIR_MAX_BOTS = 6;
+const AIR_MAX_VOICES = 4;   // bir vaqtda eng ko'pi bilan nechta botning ovozi chiqadi (eng yaqinlari) - telefon uchun cheklov
 const AIR_VIEW_DIST = 420;   // o'yindagi tuman (fog) 340 m da tugaydi, undan uzoqdagi botni ko'rsatmaymiz
 
 // To'siqlarning balandligi (m). game.js dagi COLLIDER_TOP bilan bir xil.
@@ -234,7 +235,9 @@ const wrapAngle = (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Mat
 // ---------- Havo floti ----------
 // makeModel(kind, modelName?) -> { root: Object3D, spin: Object3D[] }   (kind: 'plane' | 'heli'; modelName - airport.txt dagi nom; har safar YANGI nusxa)
 // obstacles -> { cols, ramps }   (game.js: { cols: colliders, ramps })
-export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24 }) {
+// makeVoice(kind) -> { update({ dist, pan, speed }), dispose() } | null   (ixtiyoriy; game.js: remoteAudio.createRemoteVoice)
+// hearRange -> { plane: m, heli: m }   (ovoz eshitilish masofasi; undan uzoqda ovoz o'chadi)
+export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, makeVoice = null, hearRange = { plane: 430, heli: 300 } }) {
   const bots = [];
   const paths = [];
   const P0 = { x: 0, y: 0, z: 0 }, P1 = { x: 0, y: 0, z: 0 }, P2 = { x: 0, y: 0, z: 0 };
@@ -265,12 +268,47 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24 }) {
         s: base + (baked.len * k) / path.count,
         speed: path.speed || T.speed,
         bank: 0,
+        kind: path.type, voice: null, curSpeed: 0, dx: 1e9, dy: 0, dz: 0,
       });
     }
     return { ok: checked.ok, raised: checked.raised, tooHigh: checked.tooHigh, bots: count };
   }
 
-  function update(dt, cx, cy, cz) {
+  function killVoice(bot) {
+    if (bot.voice) { bot.voice.dispose(); bot.voice = null; }
+  }
+  // Hamma ovozlarni o'chiradi (pauza, o'yindan chiqish).
+  function silence() { for (const bot of bots) killVoice(bot); }
+
+  // Eng yaqin AIR_MAX_VOICES ta botning ovozi: masofa qancha uzoq bo'lsa, shuncha past va xira (remoteAudio.js),
+  // chap/o'ng tomonga qarab stereo siljiydi. heading - o'yinchining qarashi (car.h).
+  function updateVoices(cx, cy, cz, heading, silent) {
+    if (!makeVoice) return;
+    const near = [];
+    if (!silent) {
+      for (const bot of bots) {
+        const d = Math.hypot(bot.dx, bot.dy, bot.dz);
+        if (d < (hearRange[bot.kind] || 300)) near.push({ bot, d });
+      }
+      near.sort((a, b) => a.d - b.d);
+      near.length = Math.min(near.length, AIR_MAX_VOICES);
+    }
+    const keep = new Set(near.map((n) => n.bot));
+    for (const bot of bots) if (!keep.has(bot)) killVoice(bot);
+    const rx = -Math.cos(heading), rz = Math.sin(heading);   // o'yinchining "o'ng" tomoni (game.js dagi bilan bir xil)
+    for (const { bot, d } of near) {
+      if (!bot.voice) bot.voice = makeVoice(bot.kind);   // audio hali yoqilmagan bo'lsa null - keyingi freymda qayta uriniladi
+      if (bot.voice) {
+        bot.voice.update({
+          dist: d,
+          pan: ((bot.dx * rx + bot.dz * rz) / Math.max(d, 1)) * 0.75,
+          speed: bot.curSpeed,
+        });
+      }
+    }
+  }
+
+  function update(dt, cx, cy, cz, heading = 0, silent = false) {
     for (const bot of bots) {
       const b = bot.baked;
       let sp = bot.speed;
@@ -279,10 +317,12 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24 }) {
         sp *= bot.T.padSlow + (1 - bot.T.padSlow) * clamp(d / bot.T.padR, 0, 1);
       }
       bot.s += sp * dt;
+      bot.curSpeed = sp;
       if (bot.s >= b.len) bot.s -= b.len;
 
       sampleBaked(b, bot.s, P0);
       const dx = P0.x - cx, dy = P0.y - cy, dz = P0.z - cz;
+      bot.dx = dx; bot.dy = dy; bot.dz = dz;
       if (dx * dx + dy * dy + dz * dz > far2) {            // uzoqda: faqat joyini yangilaymiz, chizmaymiz
         if (bot.group.visible) bot.group.visible = false;
         continue;
@@ -304,13 +344,15 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24 }) {
       const rate = bot.T.spin * dt;
       for (const s of bot.spin) s.rotation.y += rate;
     }
+    updateVoices(cx, cy, cz, heading, silent);
   }
 
   function dispose() {
+    silence();
     for (const bot of bots) scene.remove(bot.group);
     bots.length = 0;
     paths.length = 0;
   }
 
-  return { bots, paths, addPath, update, dispose };
+  return { bots, paths, addPath, update, silence, dispose };
 }

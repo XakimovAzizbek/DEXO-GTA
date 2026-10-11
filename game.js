@@ -617,14 +617,17 @@ async function setupAirTraffic() {
   const list = Array.isArray(zone.air) ? zone.air.slice(0, AIR_MAX_PATHS) : [];
   if (!list.length) return;
   await loadAirPathModels(list);
-  airFleet = createAirFleet({ scene, makeModel: makeAirModel, obstacles: { cols: colliders, ramps }, maxBots: AIR_BOT_LIMIT });
+  airFleet = createAirFleet({
+    scene, makeModel: makeAirModel, obstacles: { cols: colliders, ramps }, maxBots: AIR_BOT_LIMIT,
+    makeVoice: createRemoteVoice, hearRange: REMOTE_HEAR_RANGE,   // AI samolyot/vertolyot ovozi (masofaga qarab baland/past)
+  });
   for (const raw of list) {
     const info = airFleet.addPath(raw);
     if (!info.ok) console.warn('Havo yo‘li to‘liq xavfsiz emas yoki yaroqsiz:', info);
   }
 }
 function updateAirTraffic(dt) {
-  if (airFleet) airFleet.update(dt, car.x, car.y, car.z);
+  if (airFleet) airFleet.update(dt, car.x, car.y, car.z, car.h, paused);
 }
 
 // ---------- Fizika ----------
@@ -1055,6 +1058,7 @@ function setPaused(value) {
     updateHorn(false);
     stopAirportAudio();
     silenceRemoteVoices();
+    if (airFleet) airFleet.silence();
   }
   document.querySelectorAll('.ctl.is-down').forEach((el) => el.classList.remove('is-down'));
 }
