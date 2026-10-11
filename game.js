@@ -961,7 +961,7 @@ addEventListener('keydown', (e) => {
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') { keyRight = true; e.preventDefault(); }
   else if (KEYMAP[e.code]) { input[KEYMAP[e.code]] = true; e.preventDefault(); }
   else if (e.code === 'KeyR') respawn();
-  else if (e.code === 'KeyF') { if (!e.repeat) fireRocket(); }
+  else if (e.code === 'KeyF') { if (!e.repeat) startRocketHold(); }
   else if (e.code === 'KeyG') { if (!e.repeat && rocketMounts[vehicleMode]) toggleAim(); }
   else if (e.code === 'KeyL') toggleLights();
   else if (e.code === 'KeyV') setVehicle(VEHICLE_ORDER[(VEHICLE_ORDER.indexOf(vehicleMode) + 1) % VEHICLE_ORDER.length]);
@@ -970,8 +970,10 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => {
   if (e.code === 'ArrowLeft' || e.code === 'KeyA') keyLeft = false;
   else if (e.code === 'ArrowRight' || e.code === 'KeyD') keyRight = false;
+  else if (e.code === 'KeyF') stopRocketHold();
   else if (KEYMAP[e.code]) input[KEYMAP[e.code]] = false;
 });
+addEventListener('blur', () => stopRocketHold());
 
 // ---------- Pauza ----------
 let paused = false;
@@ -979,6 +981,7 @@ function setPaused(value) {
   paused = value;
   $('pause').hidden = !value;
   if (value) {
+    stopRocketHold();
     for (const k of Object.keys(input)) input[k] = false;
     input.steerAxis = 0;
     wheelDragging = false;
@@ -1520,7 +1523,23 @@ function syncRemoteDents(entry, allowSound) {
 const ROCKET_COOLDOWN = 1.6;                                  // soniya: ikki raketa orasidagi vaqt
 const ROCKET_BTN_POS = { right: '16px', bottom: '250px' };    // tugma joyi (kerak bo'lsa o'zgartiring)
 const rocketMounts = { car: null, heli: null, plane: null };   // { meshes, next, size, reloadAt, tilt, power, blast, range }
+const ROCKET_HOLD_MS = 2000;                                  // tugma shuncha vaqt bosib turilsa tez otish boshlanadi
+const ROCKET_RAPID_INTERVAL = 250;                            // ms: tez otishda raketalar orasidagi vaqt (1000/250 = sekundiga 4 ta)
 let rocketReadyAt = 0, rocketSeq = 0, lastRocketCode = null, rocketBtnReady = true;
+let rocketHolding = false, rocketHoldAt = 0, rocketRapidAt = 0;
+
+// Tugma bosildi: darrov 1 ta raketa uchadi (avvalgidek). 2 soniya bosib turilsa - sekundiga 4 tadan uchadi.
+function startRocketHold() {
+  if (rocketHolding) return;
+  rocketHolding = true;
+  rocketHoldAt = performance.now();
+  rocketRapidAt = 0;
+  fireRocket();
+}
+function stopRocketHold() {
+  rocketHolding = false;
+  rocketRapidAt = 0;
+}
 const _rw = new THREE.Vector3();
 const _rcone = { shape: 'circle', x: 0, z: 0, r: 0 };
 
@@ -1545,9 +1564,9 @@ rocketBtn.addEventListener('pointerdown', (e) => {
   unlockAirportAudio();
   initRemoteAudio();
   rocketBtn.style.transform = 'scale(.92)';
-  fireRocket();
+  startRocketHold();
 });
-const rocketBtnUp = () => { rocketBtn.style.transform = ''; };
+const rocketBtnUp = () => { rocketBtn.style.transform = ''; stopRocketHold(); };
 rocketBtn.addEventListener('pointerup', rocketBtnUp);
 rocketBtn.addEventListener('pointercancel', rocketBtnUp);
 rocketBtn.addEventListener('pointerleave', rocketBtnUp);
@@ -1672,6 +1691,10 @@ function updateRocketMounts(now) {
     if (!m) continue;
     m.reloadAt.forEach((at, i) => { if (at && now >= at) { m.meshes[i].visible = true; m.reloadAt[i] = 0; } });
   }
+  if (rocketHolding && now - rocketHoldAt >= ROCKET_HOLD_MS && now >= rocketRapidAt) {   // 2 soniya bosib turildi: sekundiga 4 ta
+    rocketRapidAt = now + ROCKET_RAPID_INTERVAL;
+    fireRocket(true);
+  }
   const ready = now >= rocketReadyAt;
   if (ready !== rocketBtnReady) {
     rocketBtnReady = ready;
@@ -1696,12 +1719,13 @@ function aimTarget() {
   return { x: _aimO.x + _aimD.x * MAX, y: _aimO.y + _aimD.y * MAX, z: _aimO.z + _aimD.z * MAX };
 }
 
-function fireRocket() {
+function fireRocket(rapid = false) {
   const m = rocketMounts[vehicleMode];
   if (!m || paused) return;
   const now = performance.now();
-  if (now < rocketReadyAt) return;
-  rocketReadyAt = now + ROCKET_COOLDOWN * 1000;
+  if (!rapid && now < rocketReadyAt) return;                   // oddiy bosishda sovish vaqti kutiladi, tez otishda yo'q
+  const cooldownMs = rapid ? ROCKET_RAPID_INTERVAL : ROCKET_COOLDOWN * 1000;
+  rocketReadyAt = now + cooldownMs;
   const i = m.next % m.meshes.length;
   m.next++;
   const mesh = m.meshes[i];
@@ -1727,7 +1751,7 @@ function fireRocket() {
   const range = infinite ? 0 : m.range;
   rocketSystem.fire({ x: _rw.x, y, z: _rw.z, h, v0: vf, pitch, size: m.size, power: m.power, blast: m.blast, range, heavy: m.heavy, infinite, mine: true });
   mesh.visible = false;
-  m.reloadAt[i] = now + ROCKET_COOLDOWN * 1000;
+  m.reloadAt[i] = now + (rapid ? ROCKET_RAPID_INTERVAL * 2 : cooldownMs);
   playRocketLaunchSound(0, 0);
   const r1 = (v) => Math.round(v * 10) / 10;
   lastRocketCode = `${++rocketSeq},${r1(_rw.x)},${r1(y)},${r1(_rw.z)},${Math.round(h * 1000) / 1000},${r1(vf)},${m.size},${Math.round(pitch * 1000) / 1000},${m.power},${m.blast},${range},${m.heavy ? 1 : 0},${infinite ? 1 : 0}`;
