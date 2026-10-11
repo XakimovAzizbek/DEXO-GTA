@@ -189,6 +189,21 @@ function addGlbHouses(file, list, res) {
   list.forEach((o) => {
     const c = colOf.get(o);
     if (!c) return;
+    if (res.boxes && res.boxes.length) {
+      // Haqiqiy devor izi bo'yicha bir nechta quti (bo'sh hovli/ayvon uchun "ko'rinmas devor" bo'lmaydi)
+      const cs = Math.cos(o.r), sn = Math.sin(o.r), top = (o.y || 0) + res.h * o.s;
+      res.boxes.forEach((b, i) => {
+        const col = i === 0 ? c : { shape: 'box', solid: true, cone: false };
+        col.x = o.x + o.s * (b.x * cs + b.z * sn);
+        col.z = o.z + o.s * (-b.x * sn + b.z * cs);
+        col.hw = b.hw * o.s; col.hd = b.hd * o.s;
+        col.cos = cs; col.sin = sn; col.top = top;
+        const reach = Math.hypot(col.hw, col.hd) + 3;
+        col.reach2 = reach * reach;
+        if (i > 0) colliders.push(col);
+      });
+      return;
+    }
     const hw = (o.w || res.w) * o.s, hd = (o.d || res.d) * o.s;
     c.hw = hw; c.hd = hd;
     const reach = Math.hypot(hw, hd) + 3;

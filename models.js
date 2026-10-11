@@ -750,6 +750,83 @@ export async function loadAirportModel(entry, onProgress) {
 // ---------- GLB uylar (home-glb.txt; zonada { t: 'house_glb', m: fayl }) ----------
 // Natija: { root, w, d, h } - root: eng uzun gorizontal tomoni GLB_HOUSE.size metr, markazi (0,0), pastki qismi y = 0;
 // w/d - yarim eni/bo'yi, h - balandligi (s = 1 da). Editor bilan bir xil o'lchamlash. Har bir fayl bir marta yuklanadi.
+// Uy devorlarining haqiqiy izi (pastki qismi): modelning 0.6 m dan ~2-3 m gacha bo'lgan qismini 0.25 m katakli to'rga
+// "chizamiz", ichini to'ldiramiz va qutilarga birlashtiramiz. Shunda L-shakldagi uy, hovli, ayvon, past bino
+// qismlari bo'sh joyda "ko'rinmas devor" hosil qilmaydi. Natija: [{x, z, hw, hd}] (s = 1 da, uy markaziga nisbatan).
+function houseFootprint(root, halfW, halfD, H) {
+  const CELL = 0.25, Y0 = 0.6, Y1 = Math.max(1.5, Math.min(H * 0.5, 3)), TOL = CELL * 0.5;
+  const nx = Math.ceil(halfW * 2 / CELL) + 3, nz = Math.ceil(halfD * 2 / CELL) + 3;
+  const ox = -halfW - CELL, oz = -halfD - CELL;
+  const grid = new Uint8Array(nx * nz);
+  const segD = (px, pz, ax, az, bx, bz) => {
+    const dx = bx - ax, dz = bz - az, l2 = dx * dx + dz * dz;
+    let t = l2 > 1e-12 ? ((px - ax) * dx + (pz - az) * dz) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+  };
+  const inTri = (px, pz, ax, az, bx, bz, cx, cz) => {
+    const d1 = (px - bx) * (az - bz) - (ax - bx) * (pz - bz);
+    const d2 = (px - cx) * (bz - cz) - (bx - cx) * (pz - cz);
+    const d3 = (px - ax) * (cz - az) - (cx - ax) * (pz - az);
+    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+  };
+  const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  root.updateMatrixWorld(true);
+  root.traverse((m) => {
+    const pos = m.isMesh && m.geometry && m.geometry.attributes.position;
+    if (!pos) return;
+    const idx = m.geometry.index;
+    const n = idx ? idx.count : pos.count;
+    for (let t = 0; t + 2 < n; t += 3) {
+      for (let k = 0; k < 3; k++) v[k].fromBufferAttribute(pos, idx ? idx.getX(t + k) : t + k).applyMatrix4(m.matrixWorld);
+      const lo = Math.min(v[0].y, v[1].y, v[2].y), hi = Math.max(v[0].y, v[1].y, v[2].y);
+      if (hi < Y0 || lo > Y1) continue;   // yer, tom, ayvon poli - hisobga olinmaydi
+      const ax = v[0].x, az = v[0].z, bx = v[1].x, bz = v[1].z, cx = v[2].x, cz = v[2].z;
+      const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - ox) / CELL - 0.5));
+      const i1 = Math.min(nx - 1, Math.ceil((Math.max(ax, bx, cx) - ox) / CELL));
+      const j0 = Math.max(0, Math.floor((Math.min(az, bz, cz) - oz) / CELL - 0.5));
+      const j1 = Math.min(nz - 1, Math.ceil((Math.max(az, bz, cz) - oz) / CELL));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        if (grid[j * nx + i]) continue;
+        const px = ox + (i + 0.5) * CELL, pz = oz + (j + 0.5) * CELL;
+        if (inTri(px, pz, ax, az, bx, bz, cx, cz) || segD(px, pz, ax, az, bx, bz) < TOL ||
+            segD(px, pz, bx, bz, cx, cz) < TOL || segD(px, pz, cx, cz, ax, az) < TOL) grid[j * nx + i] = 1;
+      }
+    }
+  });
+  // Tashqaridan to'ldirish: devor ichidagi bo'sh joy ham "qattiq" bo'ladi (mashina devordan sirg'alib kirib ketmasin)
+  const outside = new Uint8Array(nx * nz), stack = [0];
+  outside[0] = 1;
+  while (stack.length) {
+    const p = stack.pop(), i = p % nx, j = (p - i) / nx;
+    for (const q of [i > 0 ? p - 1 : -1, i < nx - 1 ? p + 1 : -1, j > 0 ? p - nx : -1, j < nz - 1 ? p + nx : -1]) {
+      if (q >= 0 && !outside[q] && !grid[q]) { outside[q] = 1; stack.push(q); }
+    }
+  }
+  // Qatorlarni birlashtirib qutilarga aylantirish
+  const rects = [];
+  let open = new Map();
+  for (let j = 0; j < nz; j++) {
+    const next = new Map();
+    for (let i = 0; i < nx;) {
+      if (outside[j * nx + i]) { i++; continue; }
+      let e = i;
+      while (e + 1 < nx && !outside[j * nx + e + 1]) e++;
+      const key = i + ',' + e;
+      let r = open.get(key);
+      if (r) { r.j1 = j; open.delete(key); } else { r = { i0: i, i1: e, j0: j, j1: j }; rects.push(r); }
+      next.set(key, r);
+      i = e + 1;
+    }
+    open = next;
+  }
+  if (!rects.length || rects.length > 80) return null;
+  return rects.map((r) => {
+    const x0 = ox + r.i0 * CELL, x1 = ox + (r.i1 + 1) * CELL, z0 = oz + r.j0 * CELL, z1 = oz + (r.j1 + 1) * CELL;
+    return { x: (x0 + x1) / 2, z: (z0 + z1) / 2, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2 };
+  });
+}
+
 const houseModelCache = new Map();
 export function loadHouseModel(file) {
   if (!houseModelCache.has(file)) {
@@ -769,7 +846,9 @@ export function loadHouseModel(file) {
       const root = new THREE.Group();
       root.add(inner);
       root.updateMatrixWorld(true);
-      return { root, w: Math.round(size.x * k * 50) / 100, d: Math.round(size.z * k * 50) / 100, h: size.y * k };
+      let boxes = null;
+      try { boxes = houseFootprint(root, size.x * k / 2, size.z * k / 2, size.y * k); } catch (e) { console.warn('uy izi hisoblanmadi:', file, e); }
+      return { root, w: Math.round(size.x * k * 50) / 100, d: Math.round(size.z * k * 50) / 100, h: size.y * k, boxes };
     })();
     houseModelCache.set(file, job);
     job.catch(() => houseModelCache.delete(file));
