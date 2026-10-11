@@ -9,7 +9,7 @@ import {
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
-  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel, buildRocketModel,
+  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel, buildRocketModel, loadHouseModel,
 } from './models.js';
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
@@ -118,9 +118,11 @@ for (const [w, d, x, z] of [
 
 // ---------- Zona obyektlari ----------
 const byType = new Map();
+const glbHouses = [];            // home-glb.txt dagi GLB uylar (o.m = glb fayl)
 const trafficLightEntries = [];   // { group, data } — bittalab render qilinadi, chunki har birining chirog'i alohida yonib-o'chadi
 for (const o of objects) {
   if (o.t === 'spawn' || o.t === 'route_point') continue;
+  if (CATALOG[o.t].glb && o.m) { glbHouses.push(o); continue; }   // GLB uylar pastda alohida (InstancedMesh bilan) chiziladi
   if (CATALOG[o.t].kind === 'traffic_light') {
     const group = buildTrafficLightGroup(o);
     group.position.set(o.x, 0, o.z);
@@ -164,12 +166,81 @@ const COLLIDER_TOP = {
   mountain_big: 60, mountain_small: 30, hill: 6, rock: 3.4, ridge: 8,
 };
 const colliders = [];
+const colOf = new Map();   // zona obyekti -> uning to'qnashuv qutisi (GLB uy o'lchami yuklangach yangilanadi)
 for (const o of objects) {
   const c = makeCollider(o);
   if (!c) continue;
   c.top = (COLLIDER_TOP[o.t] || 8) * (o.s || 1);
   c.cone = CATALOG[o.t].kind === 'mountain';   // tog' tepaga qarab ingichkalashadi (konus)
+  colOf.set(o, c);
   colliders.push(c);
+}
+
+// ---------- GLB uylar ----------
+// Har bir GLB fayl bir marta yuklanadi, uning har bir mesh'i uchun BITTA InstancedMesh quriladi (ko'p uy bo'lsa ham tez).
+// Yuklanguncha uy ko'rinmaydi; yuklanmasa (fayl topilmasa) oddiy uy shakli qoladi. To'qnashuv qutisi va balandligi
+// modelning haqiqiy o'lchamiga moslanadi.
+function addGlbHouses(file, list, res) {
+  const house = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  list.forEach((o) => {
+    const c = colOf.get(o);
+    if (!c) return;
+    const hw = (o.w || res.w) * o.s, hd = (o.d || res.d) * o.s;
+    c.hw = hw; c.hd = hd;
+    const reach = Math.hypot(hw, hd) + 3;
+    c.reach2 = reach * reach;
+    c.top = (o.y || 0) + res.h * o.s;
+  });
+  res.root.traverse((m) => {
+    if (!m.isMesh) return;
+    const mesh = new THREE.InstancedMesh(m.geometry, m.material, list.length);
+    list.forEach((o, i) => {
+      q.setFromAxisAngle(up, o.r);
+      pos.set(o.x, o.y || 0, o.z);
+      scl.setScalar(o.s);
+      house.compose(pos, q, scl).multiply(m.matrixWorld);   // uy joyi * modeldagi shu bo'lakning joyi
+      mesh.setMatrixAt(i, house);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.frustumCulled = false;
+    mesh.castShadow = shadowsOn;
+    mesh.receiveShadow = shadowsOn;
+    scene.add(mesh);
+  });
+}
+function addGlbFallback(list) {
+  const mat = getMaterial('house', 0);
+  const mesh = new THREE.InstancedMesh(getGeometry('house_glb'), mat, list.length);
+  list.forEach((o, i) => {
+    dummy.position.set(o.x, o.y || 0, o.z);
+    dummy.rotation.set(0, o.r, 0);
+    dummy.scale.setScalar(o.s);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    mesh.setColorAt(i, tintColor('house', o.c));
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.frustumCulled = false;
+  mesh.castShadow = shadowsOn;
+  mesh.receiveShadow = shadowsOn;
+  scene.add(mesh);
+}
+{
+  const byFile = new Map();
+  for (const o of glbHouses) {
+    if (!byFile.has(o.m)) byFile.set(o.m, []);
+    byFile.get(o.m).push(o);
+  }
+  for (const [file, list] of byFile) {
+    loadHouseModel(file)
+      .then((res) => addGlbHouses(file, list, res))
+      .catch((err) => { console.warn('GLB uy yuklanmadi:', file, err); addGlbFallback(list); });
+  }
 }
 const ramps = objects.map(makeRamp).filter(Boolean);
 const routes = buildRoutes(objects);

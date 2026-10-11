@@ -5,10 +5,11 @@ import {
   loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
   TRAFFIC_LIGHT_COLORS, TRAFFIC_HEAD, TRAFFIC_SEC_MIN, TRAFFIC_SEC_MAX,
-  isBendable, fetchAirportList, AIRPORT_DEFAULTS,
+  isBendable, fetchAirportList, AIRPORT_DEFAULTS, GLB_HOUSE,
 } from './data.js';
 import { getGeometry, getMaterial, loadCity, buildTrafficLightGroup, refreshTrafficLightGroup, updateTrafficLightGroup, loadAirportModel } from './models.js';
 import { showSaveDialog } from './savefile.js';
+import { cachedFetchArrayBuffer, evictGLBCache } from './glbCache.js';
 import {
   AIR_TYPES, AIR_MAX_POINTS, AIR_MAX_PATHS, AIR_MAX_BOTS,
   normalizeAirPath, buildAirObstacles, checkAirPath, sampleAirPath, groundAt, padBlocked,
@@ -157,9 +158,124 @@ function updateStatus() {
   $('undo').disabled = undoStack.length === 0;
 }
 
+// ---------- GLB uylar (home-glb.txt) ----------
+// home-glb.txt formati:  name: uy   va   glb: home-v2.glb   (bir nechta uy bo'lsa ketma-ket yoziladi).
+// GLB uy zonaga { t: 'house_glb', m: <glb fayl>, s: kattalik, y: balandlik (m), w/d: yarim eni/bo'yi } bo'lib saqlanadi.
+let houseList = [];            // [{ name, file }]
+let currentHouse = null;       // palitradan tanlangan GLB uy fayli
+let glbDragMode = 'move';      // 'move' | 'size' | 'height': barmoq bilan nimani surish
+const houseModels = new Map(); // fayl -> Promise<{ root, w, d }>
+let houseLoaderPromise = null;
+
+function parseHouseList(text) {
+  const clean = String(text).split(/\r?\n/).filter((l) => !l.trim().startsWith('#')).join('\n');
+  const parts = clean.split(/\b(name|glb)\s*:\s*/i);
+  const list = [];
+  let cur = null;
+  for (let i = 1; i < parts.length; i += 2) {
+    const key = parts[i].toLowerCase();
+    const val = (parts[i + 1] || '').trim();
+    if (!val) continue;
+    if (key === 'name') { cur = { name: val, file: '' }; list.push(cur); }
+    else {
+      if (!cur || cur.file) { cur = { name: val.replace(/\.glb$/i, ''), file: '' }; list.push(cur); }
+      cur.file = val;
+    }
+  }
+  return list.filter((h) => h.file);
+}
+function getHouseLoader() {
+  if (!houseLoaderPromise) {
+    houseLoaderPromise = Promise.all([
+      import('three/addons/loaders/GLTFLoader.js'),
+      import('three/addons/loaders/DRACOLoader.js'),
+      import('three/addons/libs/meshopt_decoder.module.js'),
+    ]).then(([{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }]) => {
+      const loader = new GLTFLoader();
+      const draco = new DRACOLoader();
+      draco.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+      loader.setDRACOLoader(draco);
+      loader.setMeshoptDecoder(MeshoptDecoder);
+      return loader;
+    });
+    houseLoaderPromise.catch(() => { houseLoaderPromise = null; });
+  }
+  return houseLoaderPromise;
+}
+// Modelni o'lchaydi: eng uzun gorizontal tomoni GLB_HOUSE.size metr, markazi (0,0) da, pastki qismi y = 0 da.
+function fitHouse(model) {
+  model.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const k = GLB_HOUSE.size / Math.max(size.x, size.z, 0.001);
+  const inner = new THREE.Group();
+  inner.add(model);
+  inner.scale.setScalar(k);
+  inner.position.set(-k * (box.min.x + box.max.x) / 2, -k * box.min.y, -k * (box.min.z + box.max.z) / 2);
+  const root = new THREE.Group();
+  root.add(inner);
+  return { root, w: Math.round(size.x * k * 50) / 100, d: Math.round(size.z * k * 50) / 100 };
+}
+function loadHouseModel(file) {
+  if (!houseModels.has(file)) {
+    const job = (async () => {
+      const loader = await getHouseLoader();
+      const names = file.includes('/') ? [file] : [file, `assets/${file}`, `home/${file}`, `houses/${file}`, `models/${file}`, `cars/${file}`, `airport/${file}`];
+      let lastErr = null;
+      for (const path of names) {
+        try {
+          const buf = await cachedFetchArrayBuffer(path);
+          const base = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+          const gltf = await new Promise((resolve, reject) => loader.parse(buf, base, resolve, reject));
+          let meshes = 0;
+          gltf.scene.traverse((o) => { if (o.isMesh) meshes++; });
+          if (!meshes) throw new Error('GLB ichida model topilmadi');
+          return fitHouse(gltf.scene);
+        } catch (err) { lastErr = err; await evictGLBCache(path); }
+      }
+      throw lastErr || new Error('Fayl topilmadi');
+    })();
+    houseModels.set(file, job);
+    job.catch(() => houseModels.delete(file));   // keyingi urinishda qayta yuklansin
+  }
+  return houseModels.get(file);
+}
+// Model yuklanguncha (yoki yuklanmasa) ko'rinadigan oddiy quti: shuni ham tanlash, surish va o'chirish mumkin.
+function buildHouseHolder(data) {
+  const g = new THREE.Group();
+  const hw = (data.w || 5), hd = (data.d || 5);
+  const geo = new THREE.BoxGeometry(hw * 2, 6, hd * 2);
+  geo.translate(0, 3, 0);
+  const ph = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: '#c9b48a', transparent: true, opacity: 0.55 }));
+  g.add(ph);
+  g.userData.placeholder = ph;
+  return g;
+}
+function attachHouse(entry) {
+  const file = entry.data.m;
+  if (!file) return;
+  loadHouseModel(file).then((res) => {
+    if (!entries.includes(entry)) return;
+    const g = entry.mesh;
+    const ph = g.userData.placeholder;
+    if (ph) { g.remove(ph); ph.geometry.dispose(); ph.material.dispose(); g.userData.placeholder = null; }
+    const clone = res.root.clone(true);
+    clone.traverse((o) => { o.userData.id = entry.id; });
+    g.add(clone);
+    if (entry.data.w !== res.w || entry.data.d !== res.d) { entry.data.w = res.w; entry.data.d = res.d; scheduleSave(); }
+    if (helper && selectedId === entry.id) helper.update();
+    updateSelInfo();
+  }).catch((err) => {
+    console.warn('GLB uy yuklanmadi:', file, err);
+    const ph = entry.mesh.userData.placeholder;
+    if (ph) ph.material.color.set('#d9534f');
+    toast(`Uy modeli topilmadi: ${file}`, 3500);
+  });
+}
+
 // ---------- Obyektlar ----------
 function applyTransform(mesh, data) {
-  mesh.position.set(data.x, 0, data.z);
+  mesh.position.set(data.x, CATALOG[data.t].glb ? (data.y || 0) : 0, data.z);   // GLB uyning balandligi (y)
   mesh.rotation.set(0, data.r, 0);
   mesh.scale.setScalar(data.s);
 }
@@ -167,13 +283,15 @@ function applyTransform(mesh, data) {
 function addEntry(data) {
   const def = CATALOG[data.t];
   const isTL = def.kind === 'traffic_light';
-  const mesh = isTL ? buildTrafficLightGroup(data) : new THREE.Mesh(getGeometry(data.t, data.y || 0, data.bend || 0), getMaterial(def.kind, data.c));
+  const isGLB = !!def.glb;
+  const mesh = isTL ? buildTrafficLightGroup(data) : isGLB ? buildHouseHolder(data) : new THREE.Mesh(getGeometry(data.t, data.y || 0, data.bend || 0), getMaterial(def.kind, data.c));
   applyTransform(mesh, data);
   const entry = { id: nextId++, data, mesh };
   mesh.userData.id = entry.id;
-  if (isTL) mesh.traverse((o) => { o.userData.id = entry.id; });   // guruh ichidagi har bir bo'lak ham tanlansin
+  if (isTL || isGLB) mesh.traverse((o) => { o.userData.id = entry.id; });   // guruh ichidagi har bir bo'lak ham tanlansin
   scene.add(mesh);
   entries.push(entry);
+  if (isGLB) attachHouse(entry);
   updateStatus();
   return entry;
 }
@@ -189,6 +307,8 @@ function refreshEntry(entry) {
   applyTransform(entry.mesh, entry.data);
   if (CATALOG[entry.data.t].kind === 'traffic_light') {
     refreshTrafficLightGroup(entry.mesh, entry.data);
+  } else if (CATALOG[entry.data.t].glb) {
+    // GLB uy: faqat joyi/burilishi/kattaligi/balandligi (applyTransform) o'zgaradi
   } else {
     entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0, entry.data.bend || 0);   // rampa balandligi/burilishi o'zgarganda
     entry.mesh.material = getMaterial(CATALOG[entry.data.t].kind, entry.data.c);
@@ -241,21 +361,24 @@ function updateSelInfo() {
   const isRoute = !!entry && CATALOG[entry.data.t].kind === 'route';
   const isRamp = !!entry && CATALOG[entry.data.t].kind === 'ramp';
   const isTL = !!entry && CATALOG[entry.data.t].kind === 'traffic_light';
+  const isGlb = !!entry && !!CATALOG[entry.data.t].glb;
   const isBend = !!entry && isBendable(entry.data.t);
   const bendLabel = (b) => (b < 0 ? 'chapga' : b > 0 ? 'o‘ngga' : 'to‘g‘ri');
   $('selInfo').textContent = entry
-    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isBend ? `, burilish: ${bendLabel(entry.data.bend || 0)}` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
+    ? `${CATALOG[entry.data.t].label}: x ${Math.round(entry.data.x)}, z ${Math.round(entry.data.z)}, kattalik ×${entry.data.s.toFixed(2)}${isBoard ? `, reklama №${entry.data.c + 1}` : ''}${isRoute ? `, marshrut №${entry.data.c + 1}` : ''}${isRamp ? `, balandlik ${entry.data.y || 0} m` : ''}${isGlb ? `, balandlik ${(entry.data.y || 0).toFixed(1)} m` : ''}${isBend ? `, burilish: ${bendLabel(entry.data.bend || 0)}` : ''}${isTL ? ', svetofor: pastdagi ro‘yxatdan chiroqni tanlab suring' : ''}`
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
   const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
-  setDisabled('hUp', !isRamp);                      // balandlik faqat rampalar uchun
-  setDisabled('hDown', !isRamp);
+  setDisabled('hUp', !isRamp && !isGlb);            // balandlik faqat rampalar va GLB uylar uchun
+  setDisabled('hDown', !isRamp && !isGlb);
+  setDisabled('tint', isGlb);                       // GLB uyning o'z ranglari bor
   setDisabled('smaller', !entry || isRamp);         // rampa kattalashtirilmaydi (nishab buzilmasin)
   setDisabled('bigger', !entry || isRamp);
   setDisabled('bend', !isBend);                     // qayrilma faqat to'g'ri yo'l/rampa uchun
   const tintBtn = $('selActions').querySelector('[data-act="tint"]');
   if (tintBtn) tintBtn.textContent = isBoard ? 'Reklama №' : isRoute ? 'Marshrut №' : 'Rangi';   // reklama/marshrutda "rang" o'rniga tartib raqami almashadi
   updateLightPanel(entry, isTL);
+  updateGlbPanel(entry, isGlb);
 }
 
 // ---------- Svetofor: chiroqlarni tanlash/surish/soniya paneli ----------
@@ -302,6 +425,7 @@ function placeAt(x, z) {
   const def = CATALOG[currentType];
   const isTree = def.kind === 'tree';
   const isNature = isTree || def.kind === 'mountain';
+  if (def.glb && !currentHouse) { toast('Avval ro‘yxatdan GLB uyni tanlang'); return; }
   pushUndo();
   if (currentType === 'spawn') {
     const old = entries.find((e) => e.data.t === 'spawn');
@@ -316,6 +440,7 @@ function placeAt(x, z) {
     c: currentType === 'billboard' ? 0 : randomTint(currentType),
     y: placeLevel,
     bend: isBendable(currentType) ? placeBend : 0,
+    ...(def.glb ? { m: currentHouse } : {}),
   }));
   scheduleSave();
 }
@@ -323,6 +448,7 @@ function placeAt(x, z) {
 // Palitra
 const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', route: '#ff5252', spawn: '#ffc933', traffic_light: '#22262e' };
 const palette = $('palette');
+let glbSlot = null;
 for (const group of GROUPS) {
   const label = document.createElement('span');
   label.className = 'group-label';
@@ -330,6 +456,7 @@ for (const group of GROUPS) {
   palette.append(label);
   for (const [type, def] of Object.entries(CATALOG)) {
     if (def.group !== group) continue;
+    if (def.glb) continue;   // GLB uylar home-glb.txt dan alohida chip bo'lib qo'shiladi
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chip';
@@ -342,10 +469,40 @@ for (const group of GROUPS) {
     btn.addEventListener('click', () => { currentType = type; markActiveChip(); updatePlaceBendUI(); });
     palette.append(btn);
   }
+  if (group === 'Uylar') { glbSlot = document.createElement('span'); glbSlot.style.display = 'contents'; palette.append(glbSlot); }
 }
 function markActiveChip() {
-  palette.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', c.dataset.type === currentType));
+  palette.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', c.dataset.glb ? (currentType === 'house_glb' && c.dataset.glb === currentHouse) : c.dataset.type === currentType));
 }
+// home-glb.txt dagi uylarni palitraga qo'shish
+function addHouseChips() {
+  if (!glbSlot) return;
+  glbSlot.textContent = '';
+  for (const h of houseList) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip';
+    btn.dataset.type = 'house_glb';
+    btn.dataset.glb = h.file;
+    const swatch = document.createElement('i');
+    swatch.style.background = '#e9dcc3';
+    swatch.style.borderColor = '#ffc933';
+    const text = document.createElement('span');
+    text.textContent = `${h.name} (GLB)`;
+    btn.append(swatch, text);
+    btn.addEventListener('click', () => {
+      currentType = 'house_glb'; currentHouse = h.file; markActiveChip(); updatePlaceBendUI();
+      loadHouseModel(h.file).catch(() => toast(`Uy modeli topilmadi: ${h.file}`, 3500));   // oldindan yuklab qo'yamiz
+    });
+    glbSlot.append(btn);
+  }
+  markActiveChip();
+}
+fetch('home-glb.txt', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.text() : ''))
+  .then((t) => { houseList = parseHouseList(t); })
+  .catch(() => { houseList = []; })
+  .then(() => addHouseChips());
 markActiveChip();
 
 $('placeLevel').addEventListener('click', () => {
@@ -952,16 +1109,22 @@ $('selActions').addEventListener('click', (ev) => {
   const entry = getEntry(selectedId);
   if (!entry) return;
   const kind = CATALOG[entry.data.t].kind;
+  const isGlb = !!CATALOG[entry.data.t].glb;
   if (act === 'rotL') actOnSelected((e) => { e.data.r -= Math.PI / 12; });
   else if (act === 'rotR') actOnSelected((e) => { e.data.r += Math.PI / 12; });
+  else if ((act === 'hUp' || act === 'hDown') && isGlb) {
+    const next = Math.round(((entry.data.y || 0) + (act === 'hUp' ? GLB_HOUSE.yStep : -GLB_HOUSE.yStep)) * 10) / 10;
+    if (next < GLB_HOUSE.yMin || next > GLB_HOUSE.yMax) { toast(`Balandlik ${GLB_HOUSE.yMin} .. ${GLB_HOUSE.yMax} m oralig‘ida bo‘ladi`); return; }
+    actOnSelected((e) => { e.data.y = next; });
+  }
   else if (act === 'hUp' || act === 'hDown') {
     const min = CATALOG[entry.data.t].rise === 0 ? RAMP_STEP : 0;
     const next = (entry.data.y || 0) + (act === 'hUp' ? RAMP_STEP : -RAMP_STEP);
     if (next < min || next > RAMP_MAX) { toast(next < min ? `Bu yo‘l ${min} m dan past bo‘lmaydi` : `Balandlik ${RAMP_MAX} m dan oshmaydi`); return; }
     actOnSelected((e) => { e.data.y = next; });
   }
-  else if (act === 'smaller') actOnSelected((e) => { e.data.s = Math.max(0.4, e.data.s / 1.1); });
-  else if (act === 'bigger') actOnSelected((e) => { e.data.s = Math.min(3, e.data.s * 1.1); });
+  else if (act === 'smaller') actOnSelected((e) => { e.data.s = Math.max(isGlb ? GLB_HOUSE.sMin : 0.4, e.data.s / 1.1); });
+  else if (act === 'bigger') actOnSelected((e) => { e.data.s = Math.min(isGlb ? GLB_HOUSE.sMax : 3, e.data.s * 1.1); });
   else if (act === 'tint') actOnSelected((e) => { e.data.c = (e.data.c + 1) % TINTS[kind].length; });
   else if (act === 'bend') actOnSelected((e) => { e.data.bend = ((e.data.bend || 0) + 2) % 3 - 1; });   // to'g'ri → o'ng → chap → to'g'ri
   else if (act === 'dup') {
@@ -978,6 +1141,52 @@ $('selActions').addEventListener('click', (ev) => {
     removeEntry(entry);
     scheduleSave();
   }
+});
+
+// ---------- GLB uy paneli: kattalik va balandlik (slayder, ±, barmoq bilan tortish) ----------
+const GLB_MODE_HINT = {
+  move: 'Uyni barmoq bilan bosib ushlab suring. Kattalik va balandlik uchun slayder yoki tugmalardan foydalaning.',
+  size: 'Ekranning istalgan joyidan barmoqni yuqoriga tortsangiz uy kattalashadi, pastga tortsangiz kichrayadi.',
+  height: 'Ekranning istalgan joyidan barmoqni yuqoriga tortsangiz uy ko‘tariladi, pastga tortsangiz tushadi.',
+};
+let glbSliderPushed = false;
+function updateGlbPanel(entry, isGlb) {
+  const panel = $('glbPanel');
+  if (!panel) return;
+  panel.hidden = !isGlb;
+  if (!isGlb) { glbDragMode = 'move'; return; }
+  const d = entry.data;
+  $('glbSize').value = String(Math.round(d.s * 100));
+  $('glbHeight').value = String(d.y || 0);
+  $('glbSizeOut').textContent = `×${d.s.toFixed(2)} (${(2 * (d.w || 5) * d.s).toFixed(1)} × ${(2 * (d.d || 5) * d.s).toFixed(1)} m)`;
+  $('glbHeightOut').textContent = `${(d.y || 0).toFixed(1)} m`;
+  panel.querySelectorAll('[data-glbmode]').forEach((b) => b.classList.toggle('is-active', b.dataset.glbmode === glbDragMode));
+  $('glbModeHint').textContent = GLB_MODE_HINT[glbDragMode];
+}
+function glbApply(fn, undoOnce) {
+  const entry = getEntry(selectedId);
+  if (!entry || !CATALOG[entry.data.t].glb) return;
+  if (!undoOnce || !glbSliderPushed) pushUndo();
+  if (undoOnce) glbSliderPushed = true;
+  fn(entry);
+  refreshEntry(entry);
+  scheduleSave();
+}
+const glbClampS = (v) => Math.min(GLB_HOUSE.sMax, Math.max(GLB_HOUSE.sMin, Math.round(v * 1000) / 1000));
+const glbClampY = (v) => Math.min(GLB_HOUSE.yMax, Math.max(GLB_HOUSE.yMin, Math.round(v * 10) / 10));
+$('glbSize').addEventListener('input', () => glbApply((e) => { e.data.s = glbClampS(Number($('glbSize').value) / 100); }, true));
+$('glbHeight').addEventListener('input', () => glbApply((e) => { e.data.y = glbClampY(Number($('glbHeight').value)); }, true));
+$('glbSize').addEventListener('change', () => { glbSliderPushed = false; });
+$('glbHeight').addEventListener('change', () => { glbSliderPushed = false; });
+$('glbSizeMinus').addEventListener('click', () => glbApply((e) => { e.data.s = glbClampS(e.data.s / 1.05); }));
+$('glbSizePlus').addEventListener('click', () => glbApply((e) => { e.data.s = glbClampS(e.data.s * 1.05); }));
+$('glbHeightMinus').addEventListener('click', () => glbApply((e) => { e.data.y = glbClampY((e.data.y || 0) - GLB_HOUSE.yStep); }));
+$('glbHeightPlus').addEventListener('click', () => glbApply((e) => { e.data.y = glbClampY((e.data.y || 0) + GLB_HOUSE.yStep); }));
+$('glbPanel').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('[data-glbmode]');
+  if (!btn) return;
+  glbDragMode = btn.dataset.glbmode;
+  updateSelInfo();
 });
 
 // ---------- Barmoq bilan ishlash ----------
@@ -1019,6 +1228,9 @@ canvas.addEventListener('pointerdown', (ev) => {
     const i = TRAFFIC_LIGHT_COLORS.indexOf(lightDragColor);
     const l = entry.data.lights[i];
     gesture.lightDrag = { i, startDx: l.dx, startDy: l.dy, pushed: false };
+  } else if (tool === 'select' && entry && CATALOG[entry.data.t].glb && glbDragMode !== 'move') {
+    // GLB uy: ekranning istalgan joyidan yuqoriga/pastga tortib kattalik yoki balandlikni o'zgartirish
+    gesture.adjust = { mode: glbDragMode, s0: entry.data.s, y0: entry.data.y || 0, pushed: false };
   } else if (tool === 'select' && selectedId != null && pickEntryId(ev) === selectedId) {
     const gp = groundPoint(ev);
     if (gp && entry) gesture.drag = { dx: entry.data.x - gp.x, dz: entry.data.z - gp.z, pushed: false };
@@ -1041,6 +1253,19 @@ canvas.addEventListener('pointermove', (ev) => {
     refreshEntry(entry);
     return;
   }
+  if (gesture.adjust && gesture.moved) {
+    const entry = getEntry(selectedId);
+    if (!entry) return;
+    if (!gesture.adjust.pushed) { pushUndo(); gesture.adjust.pushed = true; }
+    const up = gesture.sy - ev.clientY;   // yuqoriga tortilsa musbat
+    if (gesture.adjust.mode === 'size') {
+      entry.data.s = Math.min(GLB_HOUSE.sMax, Math.max(GLB_HOUSE.sMin, Math.round(gesture.adjust.s0 * Math.exp(up * 0.006) * 1000) / 1000));
+    } else {
+      entry.data.y = Math.min(GLB_HOUSE.yMax, Math.max(GLB_HOUSE.yMin, Math.round((gesture.adjust.y0 + up * 0.05) * 2) / 2));
+    }
+    refreshEntry(entry);
+    return;
+  }
   if (gesture.drag && gesture.moved) {
     const gp = groundPoint(ev);
     const entry = getEntry(selectedId);
@@ -1058,6 +1283,7 @@ function endPointer(ev) {
   if (!g || !wasSingle) return;
   if (g.lightDrag && g.moved) { scheduleSave(); return; }
   if (g.drag && g.moved) { scheduleSave(); return; }
+  if (g.adjust && g.moved) { scheduleSave(); return; }
   if (g.moved || ev.type === 'pointercancel') return;
   if (tool === 'place') {
     const gp = groundPoint(ev);

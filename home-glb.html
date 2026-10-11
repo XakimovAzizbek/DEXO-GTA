@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>GLB Ko'rgich</title>
+  <link rel="stylesheet" href="home-glb.css">
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <h1>3D Modellar</h1>
+      <span class="current-name" id="currentName">—</span>
+    </header>
+
+    <main class="stage">
+      <model-viewer
+        id="viewer"
+        camera-controls
+        auto-rotate
+        auto-rotate-delay="0"
+        rotation-per-second="25deg"
+        touch-action="pan-y"
+        shadow-intensity="1"
+        exposure="1"
+        interaction-prompt="none"
+        loading="eager"
+        alt="3D model">
+      </model-viewer>
+
+      <div class="loader" id="loader">
+        <div class="loader-bar"><div class="loader-fill" id="loaderFill"></div></div>
+        <span id="loaderText">Yuklanmoqda...</span>
+      </div>
+
+      <div class="message" id="message" hidden></div>
+
+      <div class="controls">
+        <button id="btnRotate" class="ctrl active" title="Aylantirish">⟳ Aylanish</button>
+        <button id="btnReset" class="ctrl" title="Kamerani tiklash">⌖ Tiklash</button>
+        <button id="btnFull" class="ctrl" title="To'liq ekran">⛶ Ekran</button>
+      </div>
+    </main>
+
+    <nav class="list" id="list"></nav>
+  </div>
+
+  <script src="home-glb.js"></script>
+</body>
+</html>

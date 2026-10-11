@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex, BEND_ANGLE } from './data.js';
+import { CATALOG, TINTS, TRAFFIC_LIGHT_HEX, TRAFFIC_LIGHT_DIM, trafficActiveIndex, BEND_ANGLE, GLB_HOUSE } from './data.js';
 import { cachedFetchArrayBuffer, evictGLBCache } from './glbCache.js';
 
 const TL_POLE_H = 3.0; // svetofor ustunining balandligi (metr), bosh qutisi shundan yuqorida boshlanadi
@@ -460,6 +460,8 @@ const BUILDERS = {
   },
 };
 
+BUILDERS.house_glb = BUILDERS.house_small;   // GLB uy: o'yinda GLB yuklanmaguncha oddiy uy shakli (o'yin yiqilmasligi uchun)
+
 const geoCache = new Map();
 const BENDABLE_BUILD = new Set(['road_straight', 'ramp_up', 'ramp_flat']);
 // level: faqat rampalar uchun (past uchining balandligi); bend: burilish (-1/0/1) — har birining kombinatsiyasi uchun alohida model quriladi
@@ -743,6 +745,36 @@ export async function loadAirportScene(entry, onProgress) {
 }
 export async function loadAirportModel(entry, onProgress) {
   return fitCarModel(await loadAirportScene(entry, onProgress), entry);
+}
+
+// ---------- GLB uylar (home-glb.txt; zonada { t: 'house_glb', m: fayl }) ----------
+// Natija: { root, w, d, h } - root: eng uzun gorizontal tomoni GLB_HOUSE.size metr, markazi (0,0), pastki qismi y = 0;
+// w/d - yarim eni/bo'yi, h - balandligi (s = 1 da). Editor bilan bir xil o'lchamlash. Har bir fayl bir marta yuklanadi.
+const houseModelCache = new Map();
+export function loadHouseModel(file) {
+  if (!houseModelCache.has(file)) {
+    const job = (async () => {
+      const loader = await makeGLTFLoader();
+      const names = file.includes('/') ? [file] : [file, `assets/${file}`, `home/${file}`, `houses/${file}`, `models/${file}`, `cars/${file}`, `airport/${file}`];
+      const gltf = await loadGLTFCached(loader, names);
+      const model = gltf.scene;
+      model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const k = GLB_HOUSE.size / Math.max(size.x, size.z, 0.001);
+      const inner = new THREE.Group();
+      inner.add(model);
+      inner.scale.setScalar(k);
+      inner.position.set(-k * (box.min.x + box.max.x) / 2, -k * box.min.y, -k * (box.min.z + box.max.z) / 2);
+      const root = new THREE.Group();
+      root.add(inner);
+      root.updateMatrixWorld(true);
+      return { root, w: Math.round(size.x * k * 50) / 100, d: Math.round(size.z * k * 50) / 100, h: size.y * k };
+    })();
+    houseModelCache.set(file, job);
+    job.catch(() => houseModelCache.delete(file));
+  }
+  return houseModelCache.get(file);
 }
 
 // Modelni xotiradan tozalash (mashina almashtirilganda)

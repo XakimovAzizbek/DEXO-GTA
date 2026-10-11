@@ -3,7 +3,7 @@
 
 export const ZONE_SIZE = 240;          // zona kvadrati tomoni, metr
 export const HALF = ZONE_SIZE / 2;
-export const MAX_OBJECTS = 800;
+export const MAX_OBJECTS = Infinity;   // cheklov olib tashlandi (oldin 800)
 
 // Zona chegarasi: markazdan har bir tomonga masofa (metr). w = g'arb (-x), e = sharq (+x), n = shimol (-z), s = janub (+z).
 export const MIN_EXTENT = 40;
@@ -311,6 +311,7 @@ export const CATALOG = {
   house_two:     { label: 'Ikki qavatli uy',   group: 'Uylar',     kind: 'house', hw: 5,  hd: 4.5 },
   shop:          { label: 'Do‘kon',            group: 'Uylar',     kind: 'house', hw: 6,  hd: 4.5 },
   tower:         { label: 'Baland bino',       group: 'Uylar',     kind: 'house', hw: 7,  hd: 7 },
+  house_glb:     { label: 'GLB uy',            group: 'Uylar',     kind: 'house', hw: 5,  hd: 5, glb: true },   // home-glb.txt dagi GLB uy (model fayli: o.m)
   tree_pine:     { label: 'Archa',             group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   tree_round:    { label: 'Bargli daraxt',     group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
   road_straight: { label: 'Yo‘l',              group: 'Yo‘llar',   kind: 'road',  hw: 6,  hd: 12 },
@@ -359,6 +360,9 @@ export function isValidZone(z) {
   return !!z && Array.isArray(z.objects) && z.objects.length <= MAX_OBJECTS &&
     z.objects.every(o => o && hasType(o.t) && Number.isFinite(+o.x) && Number.isFinite(+o.z));
 }
+
+// GLB uylar: kattalik (s) va balandlik (y, metr) chegaralari. s = 1 bo'lganda uyning eng uzun tomoni `size` metr bo'ladi.
+export const GLB_HOUSE = { size: 10, sMin: 0.1, sMax: 12, yMin: -10, yMax: 60, yStep: 0.5 };
 
 export const RAMP_STEP = 3;
 export const RAMP_MAX = 30;
@@ -426,6 +430,17 @@ export function normalizeObject(o) {
   if (kind === 'ramp') {
     const min = def.rise === 0 ? RAMP_STEP : 0;
     out.y = Math.min(RAMP_MAX, Math.max(min, Math.round((Number(o.y) || 0) / RAMP_STEP) * RAMP_STEP));
+  }
+  if (def.glb) {
+    // GLB uy: model fayli (m), balandligi (y, metr), model o'lchamidan olingan yarim eni/bo'yi (w, d: s = 1 da)
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    out.m = String(o.m || '').slice(0, 120);
+    out.s = clamp(out.s, GLB_HOUSE.sMin, GLB_HOUSE.sMax);
+    const y = Number(o.y);
+    out.y = Number.isFinite(y) ? clamp(Math.round(y * 10) / 10, GLB_HOUSE.yMin, GLB_HOUSE.yMax) : 0;
+    const w = Number(o.w), d = Number(o.d);
+    if (Number.isFinite(w) && w > 0) out.w = clamp(Math.round(w * 100) / 100, 0.5, 80);
+    if (Number.isFinite(d) && d > 0) out.d = clamp(Math.round(d * 100) / 100, 0.5, 80);
   }
   if (isBendable(o.t)) {
     // -1 = chapga, 0 = to'g'ri, 1 = o'ngga qayrilma
@@ -734,7 +749,7 @@ export function makeFootprint(o) {
     const r = def.r * o.s;
     return { shape: 'circle', solid: true, x: o.x, z: o.z, r, reach2: (r + 3) * (r + 3) };
   }
-  const hw = def.hw * o.s, hd = def.hd * o.s;
+  const hw = (o.w || def.hw) * o.s, hd = (o.d || def.hd) * o.s;   // GLB uyda w/d model o'lchamidan keladi
   const reach = Math.hypot(hw, hd) + 3;
   return {
     shape: 'box', solid: def.kind === 'house' || def.kind === 'billboard' || def.kind === 'ridge', x: o.x, z: o.z, hw, hd,

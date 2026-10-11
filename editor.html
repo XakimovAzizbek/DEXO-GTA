@@ -109,6 +109,28 @@
         <button type="button" class="mini mini--danger" data-act="del">O‘chirish</button>
       </div>
 
+      <div class="glb-box" id="glbPanel" hidden>
+        <div class="glb-head"><span>Kattalik</span><output id="glbSizeOut"></output></div>
+        <div class="glb-row">
+          <button type="button" class="mini mini--step" id="glbSizeMinus" aria-label="Kichraytirish">−</button>
+          <input type="range" id="glbSize" min="10" max="1200" step="1" value="100" aria-label="Uy kattaligi">
+          <button type="button" class="mini mini--step" id="glbSizePlus" aria-label="Kattalashtirish">+</button>
+        </div>
+        <div class="glb-head"><span>Balandlik (yerdan)</span><output id="glbHeightOut"></output></div>
+        <div class="glb-row">
+          <button type="button" class="mini mini--step" id="glbHeightMinus" aria-label="Pastga tushirish">↓</button>
+          <input type="range" id="glbHeight" min="-10" max="60" step="0.5" value="0" aria-label="Uy balandligi">
+          <button type="button" class="mini mini--step" id="glbHeightPlus" aria-label="Tepaga ko‘tarish">↑</button>
+        </div>
+        <div class="glb-head"><span>Barmoq bilan</span></div>
+        <div class="actions glb-modes">
+          <button type="button" class="mini is-active" data-glbmode="move">Surish</button>
+          <button type="button" class="mini" data-glbmode="size">Kattalik</button>
+          <button type="button" class="mini" data-glbmode="height">Balandlik</button>
+        </div>
+        <p class="hint hint--accent" id="glbModeHint"></p>
+      </div>
+
       <div class="lights" id="lightPanel" hidden>
         <p class="hint">Chiroqni tanlang, so‘ng ekranning istalgan joyidan barmoq bilan tortib svetofor ustida joylashtiring. Har biriga necha soniya yonib turishini yozing.</p>
         <div class="light-row" data-light="0">
