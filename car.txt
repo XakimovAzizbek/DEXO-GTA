@@ -1,3 +1,9 @@
+name: BYD
+car: 2025_byd_seal_5_dm-i_chazor_king_destroyer_05-v1.glb
+length: 9.6
+camheight: 4.3
+aimy: 4
+
 name: 9k720
 car: chinese_9k720_iskander_telar-v1.glb
 length: 17.5
