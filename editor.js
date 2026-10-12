@@ -62,6 +62,10 @@ function disposeMesh(m) {
 function buildBoundsVisuals() {
   disposeMesh(groundMesh); disposeMesh(gridMesh); disposeMesh(borderMesh);
   const minX = -bounds.w, maxX = bounds.e, minZ = -bounds.n, maxZ = bounds.s;
+  // Cheksiz zona: kamera uzoqligi va ko'rish masofasi zona kattaligiga moslashadi
+  const zoneSpan = Math.max(maxX - minX, maxZ - minZ);
+  camera.far = Math.max(1500, zoneSpan * 4);
+  camera.updateProjectionMatrix();
 
   groundMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(maxX - minX, maxZ - minZ).rotateX(-Math.PI / 2),
@@ -97,6 +101,11 @@ controls.screenSpacePanning = false;
 controls.maxPolarAngle = Math.PI * 0.47;
 controls.minDistance = 12;
 controls.maxDistance = 950;
+function fitCameraLimits() {
+  const span = Math.max(bounds.w + bounds.e, bounds.n + bounds.s);
+  controls.maxDistance = Math.max(950, span * 1.6);
+}
+fitCameraLimits();
 controls.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 
@@ -754,6 +763,7 @@ function updateAirUI() {
   $('airPadSet').classList.toggle('is-active', airPadMode);
   $('airPadSet').textContent = airPadMode ? '📍 Xaritaga bosing…' : (airPad ? '📍 Joyni o‘zgartirish' : '📍 Joy belgilash');
   $('airPadClear').disabled = !airPad;
+  if ($('airClaudeKey')) $('airClaudeKey').textContent = getClaudeKey() ? '🧠 Claude 5.5: yoqilgan' : '🔑 Claude AI kaliti';
   for (const id of ['airAuto', 'airPadAI', 'airFar', 'airNear']) $(id).disabled = airBusy;
 
   // Model tanlash tugmalari (airport.txt dagi GLB fayllar)
@@ -970,47 +980,254 @@ function genFreeLoop(opt, obs, others) {
   return best;
 }
 
-// Belgilangan joydan uchib, halqa bo'ylab aylanib, o'sha joyga qo'nadigan yo'l.
-// Halqa joydan o'tadi: 1-nuqta - yerda (pad), keyin ko'tarilish, aylanish, pastlash, yana pad.
-const PAD_PROFILE = [0, 0.35, 0.8, 1, 1, 1, 1, 1, 0.8, 0.35];
-function genPadRoute(opt, level, obs, others, usedHeads) {
+// ===================== KUCHLI AI: uchish/qo'nish yo'lini rejalash =====================
+// Reja: joydan chiqib, avval TEKIS (yumshoq) ko'tarilish yo'li, balandlik olgach burilish (aylana/stadion),
+// keyin pastlab shu joyga qo'nish. To'siq (tog', bino) bo'lsa - avval ustidan ko'tarilib o'tadi,
+// bo'lmasa yonidan aylanib o'tadi (nuqtalarni to'siqdan itaradi). Zona kichik bo'lsa masofa o'zi qisqaradi.
+const ap_smooth = (t) => t * t * (3 - 2 * t);
+const AP_BUDGET_MS = 15000;          // bitta yo'lga eng ko'pi bilan shuncha vaqt
+const AP_FACTORS = [1, 0.8, 0.62, 0.46, 0.33];   // masofa sig'masa, shu ulushlarda qayta uriniladi
+const AP_LEG_STEP = 220;             // to'g'ri qismda nuqtalar orasi, m
+
+// Joydan eng uzoq tomongacha masofa (zonaning ichida) - "Uzoqroq" tugmasi shu bilan cheklanadi
+function airRangeMaxNow() {
+  if (!airPad) return AIR_RANGE_MAX;
+  const reach = Math.max(airPad[0] + bounds.w, bounds.e - airPad[0], airPad[1] + bounds.n, bounds.s - airPad[1]) * 0.95;
+  const T = AIR_TYPES[airType];
+  const lv = Math.floor((reach - T.range0) / Math.max(1, T.rangeStep)) + 1;
+  return Math.max(AIR_RANGE_MAX, Math.min(300, lv));
+}
+
+// Stadion shakli: pad -> to'g'ri chiqish -> 180° burilish -> orqaga parallel -> 180° burilish -> pad
+function apStadium(px, pz, ang, side, D, rFrac, maxPts) {
+  const r = Math.max(60, D * rFrac);
+  const Ls = Math.max(80, D - r);
+  const ux = Math.cos(ang), uz = Math.sin(ang);
+  const vx = -Math.sin(ang) * side, vz = Math.cos(ang) * side;
+  const P = (a, b) => [px + ux * a + vx * b, pz + uz * a + vz * b];
+  let m = 8, step = AP_LEG_STEP;
+  for (let g = 0; g < 8; g++) {
+    const n = Math.max(2, Math.ceil(Ls / step));
+    if (2 * n + 2 * m <= maxPts) break;
+    if (m > 5) m--; else step *= 1.4;
+  }
+  const n = Math.max(2, Math.ceil(Ls / step));
+  const pts = [];
+  for (let i = 0; i < n; i++) pts.push(P(Ls * i / n, 0));
+  for (let k = 0; k < m; k++) { const t = -Math.PI / 2 + Math.PI * k / m; pts.push(P(Ls + r * Math.cos(t), r + r * Math.sin(t))); }
+  for (let i = 0; i < n; i++) pts.push(P(Ls * (1 - i / n), 2 * r));
+  for (let k = 0; k < m; k++) { const t = Math.PI / 2 + Math.PI * k / m; pts.push(P(r * Math.cos(t), r + r * Math.sin(t))); }
+  return pts;
+}
+// Aylana shakli (pad aylanada)
+function apCircle(px, pz, ang, dir, D, maxPts) {
+  const R = D / 2;
+  const cx = px + Math.cos(ang) * R, cz = pz + Math.sin(ang) * R;
+  const phi0 = Math.atan2(pz - cz, px - cx);
+  const K = Math.max(10, Math.min(maxPts, Math.ceil(TAU * R / 90)));
+  const pts = [];
+  for (let k = 0; k < K; k++) { const phi = phi0 + dir * TAU * k / K; pts.push([cx + Math.cos(phi) * R, cz + Math.sin(phi) * R]); }
+  pts[0] = [px, pz];
+  return pts;
+}
+// Balandlik profili: boshida yumshoq ko'tarilish (~6°), oxirida yumshoq pastlash, o'rtada H da
+function apProfile(pts2, gy, H) {
+  const n = pts2.length;
+  const s = [0];
+  for (let i = 1; i < n; i++) s.push(s[i - 1] + Math.hypot(pts2[i][0] - pts2[i - 1][0], pts2[i][1] - pts2[i - 1][1]));
+  const L = s[n - 1] + Math.hypot(pts2[0][0] - pts2[n - 1][0], pts2[0][1] - pts2[n - 1][1]);
+  const dH = Math.max(1, H - gy);
+  const Lc = Math.min(L * 0.4, Math.max(150, dH / 0.10));
+  const Ld = Math.min(L * 0.4, Math.max(150, dH / 0.08));
+  return pts2.map((q, i) => {
+    const up = ap_smooth(Math.min(1, s[i] / Lc)), down = ap_smooth(Math.min(1, (L - s[i]) / Ld));
+    return [r1(q[0]), r1(q[1]), r1(gy + Math.min(up, down) * dH)];
+  });
+}
+const apClampPt = (q, m) => [
+  Math.max(-bounds.w + m, Math.min(bounds.e - m, q[0])),
+  Math.max(-bounds.n + m, Math.min(bounds.s - m, q[1])),
+];
+function apInside(pts, m) { return pts.every((q) => q[0] >= -bounds.w + m && q[0] <= bounds.e - m && q[1] >= -bounds.n + m && q[1] <= bounds.s - m); }
+
+// Tuzatish: avval to'siq ustidan ko'taradi (checkAirPath fix); bo'lmasa xavfli nuqtalarni to'siqdan YONGA itaradi.
+function apRepair(path, obs, maxIter) {
+  for (let it = 0; it < maxIter; it++) {
+    const res = checkAirPath(path, obs, true);
+    path.pts = res.pts;
+    if (res.ok) return res;
+    let bad = Array.isArray(res.bad) && res.bad.length ? res.bad : (checkAirPath(path, obs, false).bad || []);
+    if (!bad.length) return null;
+    const pts = path.pts, n = pts.length;
+    const push = pts.map(() => [0, 0, 0]);
+    const stepM = 40 + it * 45;
+    for (const b of bad.slice(0, 120)) {
+      let j = -1, dj = Infinity;
+      for (let i = 1; i < n; i++) { const d = Math.hypot(pts[i][0] - b.x, pts[i][1] - b.z); if (d < dj) { dj = d; j = i; } }
+      if (j < 0) continue;
+      let dx = pts[j][0] - b.x, dz = pts[j][1] - b.z, d = Math.hypot(dx, dz);
+      if (d < 1) {   // aynan ustida: yo'lga perpendikulyar itaramiz
+        const a = pts[(j + 1) % n], c = pts[j - 1];
+        dx = -(a[1] - c[1]); dz = a[0] - c[0]; d = Math.hypot(dx, dz) || 1;
+      }
+      dx /= d; dz /= d;
+      for (const [k, w] of [[j, 1], [j - 1, 0.5], [j + 1, 0.5]]) {
+        if (k < 1 || k >= n) continue;
+        push[k][0] += dx * w; push[k][1] += dz * w; push[k][2] += w;
+      }
+    }
+    let moved = 0;
+    for (let i = 1; i < n; i++) {
+      if (!push[i][2]) continue;
+      const l = Math.hypot(push[i][0], push[i][1]);
+      if (l < 1e-6) continue;
+      const q = apClampPt([pts[i][0] + push[i][0] / l * stepM, pts[i][1] + push[i][1] / l * stepM], 8);
+      pts[i][0] = r1(q[0]); pts[i][1] = r1(q[1]);
+      moved++;
+    }
+    if (!moved) return null;
+  }
+  const last = checkAirPath(path, obs, true);
+  path.pts = last.pts;
+  return last.ok ? last : null;
+}
+
+// Nomzodni tekshirib, ball beradi (kam = yaxshi)
+function apEvaluate(opt, pts, obs, others, px, pz, usedHeads) {
   const T = AIR_TYPES[opt.kind];
-  const R = padDistance(opt.kind, level) / 2;
+  const path = normalizeAirPath({ type: opt.kind, model: opt.name || undefined, count: airCount, pad: [px, pz], pts });
+  if (!path.pad || path.pts.length < 6) return null;
+  const res = apRepair(path, obs, 9);
+  if (!res) return null;
+  if (!apInside(path.pts, 4)) return null;
+  const samples = sampleAirPath(path, 20);
+  if (!insideBounds(samples, 4)) return null;
+  const head = Math.atan2(path.pts[1][0] - px, path.pts[1][1] - pz);
+  const same = usedHeads.some((h) => Math.abs(Math.atan2(Math.sin(h - head), Math.cos(h - head))) < 0.6) ? 60 : 0;
+  const score = (res.gain || 0) + crossConflicts(samples, others, T, [px, pz]) * 40 + same;
+  return { path, score };
+}
+
+async function genPadRoute(opt, level, obs, others, usedHeads) {
+  const T = AIR_TYPES[opt.kind];
   const [px, pz] = airPad;
   const gy = groundAt(obs, px, pz) + 0.5;
-  const K = PAD_PROFILE.length;
-  let best = null;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const a = rand(0, TAU);
-    const cx = px + Math.cos(a) * R, cz = pz + Math.sin(a) * R;
-    const dir = Math.random() < 0.5 ? 1 : -1;
-    const phi0 = Math.atan2(pz - cz, px - cx);
-    const H = Math.max(T.minAlt, Math.min(T.maxAlt * 0.85, T.defAlt * rand(0.8, 1.4)));
-    const wob = rand(0.05, 0.14), wp = rand(0, TAU);
-    const pts = [];
-    for (let k = 0; k < K; k++) {
-      const phi = phi0 + dir * TAU * k / K;
-      const rr = k === 0 ? 1 : 1 + wob * Math.sin(wp + k * 1.7);
-      pts.push([
-        r1(k === 0 ? px : cx + Math.cos(phi) * R * rr),
-        r1(k === 0 ? pz : cz + Math.sin(phi) * R * rr),
-        r1(gy + PAD_PROFILE[k] * (H - gy)),
-      ]);
+  const D0 = padDistance(opt.kind, level);
+  const maxPts = Math.max(12, Math.min(AIR_MAX_POINTS, 80));
+  const t0 = performance.now();
+  for (let fi = 0; fi < AP_FACTORS.length; fi++) {
+    const D = D0 * AP_FACTORS[fi];
+    const roundEnd = t0 + AP_BUDGET_MS * (fi + 1) / AP_FACTORS.length;
+    let best = null, tries = 0;
+    while (performance.now() < roundEnd && tries < 40) {
+      // zonaga sig'adigan yo'nalishni tanlaymiz (arzon tekshiruv)
+      let pts2 = null;
+      for (let g = 0; g < 80 && !pts2; g++) {
+        const ang = rand(0, TAU), side = Math.random() < 0.5 ? 1 : -1;
+        const cand = Math.random() < 0.7 ? apStadium(px, pz, ang, side, D, rand(0.14, 0.26), maxPts) : apCircle(px, pz, ang, side, D, maxPts);
+        if (apInside(cand, 10)) pts2 = cand;
+      }
+      if (!pts2) break;     // bu masofa zonaga sig'maydi: qisqartiramiz
+      tries++;
+      const H = Math.max(T.minAlt, Math.min(T.maxAlt * 0.9, T.defAlt * rand(0.9, 1.5)));
+      const ev = apEvaluate(opt, apProfile(pts2, gy, H), obs, others, px, pz, usedHeads);
+      if (ev && (!best || ev.score < best.score)) best = ev;
+      if (best && (best.score < 1 || tries >= 10)) break;
+      await tick();
     }
-    const path = normalizeAirPath({ type: opt.kind, model: opt.name || undefined, count: airCount, pad: [px, pz], pts });
-    if (!path.pad || path.pts.length < K) continue;
-    const res = checkAirPath(path, obs, true);
-    if (!res.ok) continue;
-    path.pts = res.pts;
-    const samples = sampleAirPath(path, 6);
-    if (!insideBounds(samples, 4)) continue;
-    const head = Math.atan2(path.pts[1][0] - px, path.pts[1][1] - pz);
-    const same = usedHeads.some((h) => Math.abs(Math.atan2(Math.sin(h - head), Math.cos(h - head))) < 0.6) ? 60 : 0;   // oldingi yo'llardan farqli yo'nalish
-    const score = (res.gain || 0) + crossConflicts(samples, others, T, [px, pz]) * 40 + same;
-    if (!best || score < best.score) best = { path, score };
-    if (score < 1) break;
+    if (best) return { ...best, dist: Math.round(D) };
   }
-  return best;
+  return null;
+}
+
+// ===================== Claude Sonnet 5.5 (medium) bilan rejalash =====================
+// Kalit FAQAT shu qurilmaning xotirasida saqlanadi (kodga yoki zone.json ga yozilmaydi).
+const CLAUDE_KEY_STORE = 'dexo-gta:claudekey';
+const CLAUDE_MODEL = 'claude-sonnet-5-5';
+const getClaudeKey = () => { try { return localStorage.getItem(CLAUDE_KEY_STORE) || ''; } catch { return ''; } };
+function setClaudeKey(v) { try { if (v) localStorage.setItem(CLAUDE_KEY_STORE, v); else localStorage.removeItem(CLAUDE_KEY_STORE); } catch { /* jim */ } }
+
+async function claudeAsk(key, system, messages) {
+  const send = (extra) => fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 6000, system, messages, ...extra }),
+  });
+  let resp = await send({ output_config: { effort: 'medium' } });      // "medium" kuch darajasi
+  if (resp.status === 400) resp = await send({});                       // parametr qabul qilinmasa, oddiy so'rov
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json();
+  return (data.content || []).map((c) => (c.type === 'text' ? c.text : '')).join('');
+}
+
+function claudeObstacles(px, pz, maxN) {
+  const skip = /road|land|ramp|spawn|tree|rock|traffic|billboard/;
+  return entries.map((e) => e.data).filter((d) => !skip.test(d.t))
+    .map((d) => ({ t: d.t, x: Math.round(d.x), z: Math.round(d.z), s: Math.round((d.s || 1) * 100) / 100 }))
+    .sort((a, b) => Math.hypot(a.x - px, a.z - pz) - Math.hypot(b.x - px, b.z - pz))
+    .slice(0, maxN);
+}
+
+async function claudePadRoute(key, opt, level, obs, others, usedHeads) {
+  const T = AIR_TYPES[opt.kind];
+  const [px, pz] = airPad;
+  const gy = groundAt(obs, px, pz) + 0.5;
+  const D = padDistance(opt.kind, level);
+  const maxPts = Math.max(12, Math.min(AIR_MAX_POINTS, 60));
+  const system = 'You are an expert flight-route planner for a 3D game map. Reply with ONLY one JSON object, no prose, no markdown.';
+  const info = {
+    kind: opt.kind,
+    pad: [px, pz], padGroundY: Math.round(gy * 10) / 10,
+    zone: { xMin: -bounds.w + 12, xMax: bounds.e - 12, zMin: -bounds.n + 12, zMax: bounds.s - 12 },
+    targetReachFromPad_m: D,
+    altitude: { min: T.minAlt, max: T.maxAlt, typical: T.defAlt, obstacleMargin: T.margin },
+    maxWaypoints: maxPts,
+    obstacles_nearest_first: claudeObstacles(px, pz, 160),
+    note: 'obstacles are x,z centers of tall objects (mountains, towers, buildings); t = type, s = scale (bigger = taller/wider). Trees/roads are ignored.',
+  };
+  const rules = 'Design a CLOSED loop route (the vehicle goes from the pad, flies, and lands back on the same pad). Rules:\n'
+    + '1) pts[0] must be exactly the pad (x,z) at ground altitude.\n'
+    + '2) First fly a straight, gentle climb-out (about 6 degrees) away from the pad; only after reaching cruise altitude start turning.\n'
+    + '3) Then fly a large smooth loop that reaches about targetReachFromPad_m from the pad, avoiding obstacles (go around them, or fly above them if altitude allows; keep obstacleMargin).\n'
+    + '4) Finally descend gently and approach the pad from the last waypoints.\n'
+    + '5) Stay inside the zone box. Use at most maxWaypoints waypoints, spaced 80-250 m on straights, denser in turns.\n'
+    + 'Return: {"pts":[[x,z,altitude],...]}\n\nINPUT:\n' + JSON.stringify(info);
+  const messages = [{ role: 'user', content: rules }];
+  let bestFail = null;
+  for (let round = 0; round < 3; round++) {
+    const text = await claudeAsk(key, system, messages);
+    messages.push({ role: 'assistant', content: text });
+    let arr = null;
+    try {
+      const a = text.indexOf('{'), b = text.lastIndexOf('}');
+      arr = JSON.parse(text.slice(a, b + 1)).pts;
+    } catch { arr = null; }
+    if (!Array.isArray(arr) || arr.length < 6 || !arr.every((q) => Array.isArray(q) && q.length >= 2 && q.slice(0, 2).every(Number.isFinite))) {
+      messages.push({ role: 'user', content: 'Invalid JSON or too few points. Return ONLY {"pts":[[x,z,altitude],...]}.' });
+      continue;
+    }
+    let pts2 = arr.slice(0, maxPts).map((q) => apClampPt([Number(q[0]), Number(q[1])], 10));
+    pts2[0] = [px, pz];
+    const alts = arr.map((q) => Number(q[2])).filter(Number.isFinite).sort((a, b) => a - b);
+    const H = Math.max(T.minAlt, Math.min(T.maxAlt * 0.9, alts.length ? alts[Math.floor(alts.length / 2)] : T.defAlt));
+    const pts = apProfile(pts2, gy, H);          // yumshoq ko'tarilish/pastlashni kafolatlaydi
+    const ev = apEvaluate(opt, pts, obs, others, px, pz, usedHeads);
+    if (ev) return { ...ev, dist: Math.round(D) };
+    // Xato bo'lsa: xavfli joylarni Claude'ga qaytaramiz
+    const probe = normalizeAirPath({ type: opt.kind, count: airCount, pad: [px, pz], pts });
+    const chk = probe.pts && probe.pts.length >= 3 ? checkAirPath(probe, obs, true) : null;
+    const bad = chk && chk.bad ? chk.bad.slice(0, 25).map((b) => [Math.round(b.x), Math.round(b.z), Math.round(b.y)]) : [];
+    bestFail = bad;
+    messages.push({ role: 'user', content: `Route failed the safety check (too close to obstacles, or outside the zone/too few valid points). Dangerous [x,z,y] spots: ${JSON.stringify(bad)}. Fix: move waypoints around these obstacles with a wider detour (or higher altitude, max ${T.maxAlt}) and return ONLY the new JSON.` });
+    await tick();
+  }
+  void bestFail;
+  return null;
 }
 
 const otherSamples = () => airPaths.filter((p) => p.pts.length >= 3).map((p) => sampleAirPath(p, 6));
@@ -1049,23 +1266,37 @@ async function addPadRoute(level) {
   const obs = airObs();
   if (padBlocked(obs, airPad[0], airPad[1])) { toast('Belgilangan joyda to‘siq (uy, daraxt yoki tog‘) bor. Bo‘sh joyni qayta belgilang.', 4500); return false; }
   airBusy = true; updateAirUI();
-  toast('AI yo‘lni hisoblayapti…', 1500);
   await tick();
   try {
     const opt = currentAirOption();
     const used = airPaths
       .filter((p) => p.pad && p.pts.length > 1 && Math.hypot(p.pad[0] - airPad[0], p.pad[1] - airPad[1]) < 2)
       .map((p) => Math.atan2(p.pts[1][0] - p.pad[0], p.pts[1][1] - p.pad[1]));
-    const best = genPadRoute(opt, level, obs, otherSamples(), used);
+    const others = otherSamples();
+    let best = null, via = 'AI';
+    const key = getClaudeKey();
+    if (key) {
+      toast('🧠 Claude Sonnet 5.5 yo‘lni rejalayapti… (bir necha soniya)', 6000);
+      try { best = await claudePadRoute(key, opt, level, obs, others, used); if (best) via = 'Claude'; }
+      catch (err) { console.warn('Claude xatosi:', err); toast(`Claude javob bermadi (${err.message}). Ichki AI ishlaydi…`, 3000); }
+    }
     if (!best) {
-      toast(`${padDistance(opt.kind, level)} m masofaga xavfsiz yo‘l topilmadi (zona kichik yoki to‘siq ko‘p). “Yaqinroq” ni bosing yoki zonani kengaytiring.`, 5500);
+      toast('AI yo‘lni hisoblayapti… (to‘siqlarni chetlab o‘tadi)', 4000);
+      await tick();
+      best = await genPadRoute(opt, level, obs, others, used);
+    }
+    if (!best) {
+      toast('Xavfsiz yo‘l topilmadi: joy atrofi to‘siqlar bilan o‘ralgan yoki juda baland tog‘lar bor. Joyni boshqa yerga ko‘chiring.', 6000);
       return false;
     }
     airPaths.push(best.path);
     airActive = airPaths.length - 1;
     airType = best.path.type;
     scheduleSave();
-    toast(`🛫 Yo‘l qo‘shildi: ${padDistance(opt.kind, level)} m gacha uchib, shu joyga qo‘nadi ✅`, 3500);
+    const want = padDistance(opt.kind, level);
+    toast(best.dist < want
+      ? `🛫 ${via}: yo‘l qo‘shildi, ${best.dist} m gacha (${want} m zonaga sig‘madi) ✅`
+      : `🛫 ${via}: yo‘l qo‘shildi: ${best.dist} m gacha uchib, shu joyga qo‘nadi ✅`, 4000);
     return true;
   } finally {
     airBusy = false;
@@ -1081,8 +1312,20 @@ $('airPadSet').addEventListener('click', () => {
 });
 $('airPadClear').addEventListener('click', () => { airPad = null; airPadMode = false; saveAirPad(); drawAir(); });
 $('airPadAI').addEventListener('click', () => { addPadRoute(airRange); });
+if ($('airClaudeKey')) {
+  $('airClaudeKey').addEventListener('click', () => {
+    const cur = getClaudeKey();
+    const v = prompt(cur
+      ? 'Claude API kaliti saqlangan. Yangisini kiriting yoki bo‘sh qoldirib OK bosing (Claude o‘chadi):'
+      : 'Claude API kalitini kiriting (sk-ant-...). Kalit faqat shu qurilmada saqlanadi. Bo‘sh qoldirsangiz ichki AI ishlaydi:', '');
+    if (v === null) return;
+    setClaudeKey(v.trim());
+    updateAirUI();
+    toast(v.trim() ? '🧠 Claude Sonnet 5.5 yoqildi' : 'Claude o‘chirildi: ichki AI ishlaydi', 2500);
+  });
+}
 $('airFar').addEventListener('click', async () => {
-  if (airRange >= AIR_RANGE_MAX) { toast('Bu eng uzoq masofa'); return; }
+  if (airRange >= airRangeMaxNow()) { toast('Bu eng uzoq masofa (zona chegarasi)'); return; }
   if (await addPadRoute(airRange + 1)) { airRange++; updateAirUI(); }
 });
 $('airNear').addEventListener('click', async () => {
@@ -1334,15 +1577,20 @@ function updateBoundsUI() {
 function setBounds(next) {
   bounds = normalizeBounds(next);
   buildBoundsVisuals();
+  fitCameraLimits();
   updateBoundsUI();
 }
 document.querySelectorAll('[data-bound]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const key = btn.dataset.bound;
     const delta = Number(btn.dataset.d);
-    const value = bounds[key] + delta * BOUNDS_STEP;
-    if (value < MIN_EXTENT || value > MAX_EXTENT) {
-      toast(value < MIN_EXTENT ? `Bu tomon ${MIN_EXTENT} m dan kichik bo‘lmaydi` : `Bu tomon ${MAX_EXTENT} m dan katta bo‘lmaydi`);
+    // Qadam zona o'lchamiga moslashadi: katta zonada katta qadam, kichigida mayda qadam
+    const cur = bounds[key];
+    let step = cur < 400 ? BOUNDS_STEP : Math.max(BOUNDS_STEP, Math.round(cur * 0.1 / 10) * 10);
+    if (delta < 0) while (step > 1 && cur - step < MIN_EXTENT) step = Math.floor(step / 2);
+    const value = cur + delta * step;
+    if (value < MIN_EXTENT) {
+      toast(`Bu tomon ${MIN_EXTENT} m dan kichik bo‘lmaydi`);
       return;
     }
     pushUndo();

@@ -6,8 +6,8 @@ export const HALF = ZONE_SIZE / 2;
 export const MAX_OBJECTS = Infinity;   // cheklov olib tashlandi (oldin 800)
 
 // Zona chegarasi: markazdan har bir tomonga masofa (metr). w = g'arb (-x), e = sharq (+x), n = shimol (-z), s = janub (+z).
-export const MIN_EXTENT = 40;
-export const MAX_EXTENT = 600;
+export const MIN_EXTENT = 1;      // cheklov yo'q: xohlagancha kichik (faqat 0 dan katta bo'lsin)
+export const MAX_EXTENT = Infinity; // cheklov olib tashlandi (oldin 600 m)
 export const BOUNDS_STEP = 40;
 export function normalizeBounds(b) {
   const src = b || {};

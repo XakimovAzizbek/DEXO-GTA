@@ -1,0 +1,15 @@
+name: tog1
+glb: mountain-v1.glb
+solid: yo'q
+
+name: tog2
+glb: mountain_low_poly_for_distant_mountains-v1.glb
+
+name: yol1
+glb: road_straight.glb
+
+name: yol2
+glb: road_hd.glb
+
+name: dexo gta
+glb: dexogta.glb
