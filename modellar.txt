@@ -11,5 +11,14 @@ glb: road_straight.glb
 name: yol2
 glb: road_hd.glb
 
-name: dexo gta
+name: dexo gta model1
 glb: dexogta.glb
+
+name: dexo gta model2
+glb: dexo_gta_online.glb
+
+name: dexo muzik model1
+glb: dexomuzikmodel1-v1.glb
+
+name: dexo gta model3
+glb: dexogtamodel.glb
