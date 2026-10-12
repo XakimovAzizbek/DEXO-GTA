@@ -17,6 +17,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="common.css">
   <link rel="stylesheet" href="index.css">
+  <style>
+    .preload { position: relative; z-index: 1; padding: 12px 14px; border-radius: 14px; background: rgba(13, 19, 32, .72); border: 1px solid rgba(255, 255, 255, .12); color: var(--paint, #fff); font-size: 14px; }
+    .preload[hidden] { display: none; }
+    .preload__row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-weight: 600; }
+    .preload__row b { font-size: 18px; color: var(--hazard, #ffc933); font-variant-numeric: tabular-nums; }
+    .preload__bar { height: 8px; margin-top: 8px; border-radius: 99px; background: rgba(255, 255, 255, .14); overflow: hidden; }
+    .preload__bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--hazard, #ffc933); transition: width .2s linear; }
+    .preload__sub { margin: 6px 0 0; font-size: 12px; color: var(--kerb, #c9ced6); min-height: 1em; }
+  </style>
   <meta name="monetag" content="4b806a464e66caee179f9868c47b11ac">
   <!-- Monetag reklama kodi shu yerga qo'shildi -->
   <script>(function(s){s.dataset.zone='12013456',s.src='https://nap5k.com/tag.min.js'})([document.documentElement, document.body].filter(Boolean).pop().appendChild(document.createElement('script')))</script>
@@ -43,6 +52,11 @@
       <a class="btn btn--ghost" href="airport.html">Samolyot / Vertolyot</a>
       <a class="btn btn--ghost" href="settings.html">Sozlamalar</a>
       <p class="status" id="status"></p>
+      <div class="preload" id="preload" hidden aria-live="polite">
+        <div class="preload__row"><span id="preloadLabel">Fayllar tekshirilmoqda…</span><b id="preloadPct">0%</b></div>
+        <div class="preload__bar"><i id="preloadFill"></i></div>
+        <p class="preload__sub" id="preloadSub"></p>
+      </div>
     </nav>
 
     <div class="road" aria-hidden="true"></div>
