@@ -1,3 +1,14 @@
+name: CHEVROLET TAHOE
+car: ps1_low-poly_2021_chevrolet_tahoe_z71-v1.glb
+length: 11.1
+rotate: 180
+camdist: 11.5
+camheight: 7.2
+aimy: 1.9
+fov: 65
+fovspeed: 0.05
+follow: 20
+
 name: BYD
 car: 2024_byd_atto_2-v1.glb
 length: 9.8
