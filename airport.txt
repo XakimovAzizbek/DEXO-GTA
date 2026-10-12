@@ -6,14 +6,20 @@ rotate: 180
 name: Helicopter
 helicopter: helicopter.glb
 length: 14.5
+rocket: 1
+rocketx: 1
+rockety: 0.3
+rocketz: 1.8
+rocketsize: 3.2
+speed: 1.1
 
 name: Rafale M
 airplane: dassault_rafale_m_-_fighter_jet_-_free-v1.glb
 length: 15.3
 rotate: 180
-speed: 3
 rocket: 1
 rocketx: 2.15
 rockety: 1.85
 rocketz: -0.85
 rocketsize: 5.6
+speed: 3

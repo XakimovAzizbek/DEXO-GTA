@@ -667,7 +667,24 @@ const AIR_SPIN_RE = /rotor|propellar|propeller|\bblade\b|\bprop\b/i;
 // Har bir bot uchun YANGI model: yo'lda tanlangan GLB (airport.txt dagi nom) nusxasi; bo'lmasa o'yinchining
 // samolyot/vertolyoti nusxasi; u ham bo'lmasa kod bilan yasalgan oddiy model.
 const airPathModels = new Map();   // airport.txt dagi nom -> yuklangan model (yo'llar uchun)
-function makeAirModel(kind, modelName) {
+const airPathEntries = new Map();  // airport.txt dagi nom -> sozlamalar (raketa joyi va h.k.)
+const AIR_COMBAT_MODES = ['car', 'plane', 'heli'];   // o'yinchi shu ulovda raketa otsa, joyida turgan jangovor botlar uchib kelib hujum qiladi (mashina ham)
+
+// airport.txt dagi raketa sozlamasidan (rocket: 1, rocketx/y/z, rocketsize ...) jangovor botning raketa joylari.
+function airMountFrom(entry) {
+  if (!entry || !Number(entry.rocket)) return null;
+  const rx = Number(entry.rocketx) || 0, ry = Number(entry.rockety) || 0, rz = Number(entry.rocketz) || 0;
+  return {
+    size: clamp(Number(entry.rocketsize) || 2.4, 0.6, 8),
+    power: clamp(Number(entry.rocketpower) || 1, 0.3, 4),
+    blast: clamp(Number(entry.rocketblast) || 16, 3, 80),
+    range: Math.max(0, Number(entry.rocketrange) || 0),
+    tilt: clamp(Number(entry.rockettilt) || 0, -90, 90) * Math.PI / 180,
+    visual: true,
+    offs: Math.abs(rx) > 0.05 ? [[rx, ry, rz], [-rx, ry, rz]] : [[rx, ry, rz]],   // o'ng va chap tomon (o'yinchinikidagi kabi)
+  };
+}
+function makeAirModel(kind, modelName, combat = false) {
   const built = kind === 'heli' ? heliBuilt : planeBuilt;
   const src = (modelName && airPathModels.get(modelName)) || airRoots[kind];
   let root, spin = [];
@@ -680,7 +697,20 @@ function makeAirModel(kind, modelName) {
     spin = [fresh.spin, fresh.spin2].filter(Boolean);
   }
   root.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-  return { root, spin };
+  let mount = null;
+  const rockets = [];
+  if (combat) {   // jangovor bot: modelida raketa o'rnatilgan bo'lsa (airport.txt) ko'rinadi va shu joydan otiladi
+    mount = airMountFrom((modelName && airPathEntries.get(modelName)) || airportProfiles[kind]);
+    if (mount) {
+      for (const o of mount.offs) {
+        const m = buildRocketModel(mount.size);
+        m.position.set(o[0], o[1], o[2]);
+        m.rotation.x = -mount.tilt;
+        rockets.push(m);
+      }
+    }
+  }
+  return { root, spin, mount, rockets };
 }
 
 // Yo'llarda tanlangan modellarni (airport.txt) oldindan yuklaydi, keyin botlar yaratiladi.
@@ -691,6 +721,7 @@ async function loadAirPathModels(list) {
   for (const name of names) {
     const entry = all.find((a) => a.name === name);
     if (!entry) continue;
+    airPathEntries.set(name, { ...AIRPORT_DEFAULTS, ...entry });
     const mode = entry.kind === 'helicopter' ? 'heli' : 'plane';
     if (airportProfiles[mode].name === name && airRoots[mode]) { airPathModels.set(name, airRoots[mode]); continue; }   // o'yinchi modeli bilan bir xil
     try {
@@ -701,6 +732,18 @@ async function loadAirPathModels(list) {
   }
 }
 
+// Jangovor havo boti raketa uchirdi: o'yinchinikidek raketa (mine: false - mening ulovimga tegsa pachoqlaydi).
+function botFireRocket(sp) {
+  rocketSystem.fire({
+    x: sp.x, y: sp.y, z: sp.z, h: sp.h, v0: sp.v0, pitch: sp.pitch, size: sp.size,
+    power: sp.power, blast: sp.blast, range: sp.range, heavy: false, infinite: false, mine: false, owner: 'airbot',
+  });
+  const dx = sp.x - car.x, dy = sp.y - car.y, dz = sp.z - car.z;
+  const dist = Math.hypot(dx, dy, dz);
+  const rx = -Math.cos(car.h), rz = Math.sin(car.h);
+  playRocketLaunchSound(dist, ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.75);
+}
+
 async function setupAirTraffic() {
   const list = Array.isArray(zone.air) ? zone.air.slice(0, AIR_MAX_PATHS) : [];
   if (!list.length) return;
@@ -708,6 +751,8 @@ async function setupAirTraffic() {
   airFleet = createAirFleet({
     scene, makeModel: makeAirModel, obstacles: { cols: colliders, ramps }, maxBots: AIR_BOT_LIMIT,
     makeVoice: createRemoteVoice, hearRange: REMOTE_HEAR_RANGE,   // AI samolyot/vertolyot ovozi (masofaga qarab baland/past)
+    fireRocket: botFireRocket,   // jangovor botlar raketa otishi uchun
+    bounds,                      // zona chegarasi: jangovor botlar shu chegaragacha uchib boradi
   });
   for (const raw of list) {
     const info = airFleet.addPath(raw);
@@ -1407,6 +1452,7 @@ function frame(now) {
     const steps = Math.max(1, Math.ceil(dt / (1 / 60)));
     for (let i = 0; i < steps; i++) stepVehicle(dt / steps);
     resolveVehicleCollisions();
+    resolveAirBotCollisions();   // AI samolyot/vertolyotga urilsam: ikkalamiz ham pachoq bo'lamiz
 
     const speed = Math.hypot(car.vx, car.vz);
     const vf = car.vx * Math.sin(car.h) + car.vz * Math.cos(car.h);
@@ -1518,6 +1564,11 @@ function repairAllVehicles() {
     const root = localRoot(mode);
     if (root) repairModel(root);
     crashDents[mode] = [];
+  }
+  if (airFleet) {   // urilgan AI samolyot/vertolyotlar ham tiklanadi
+    for (const b of airFleet.bots) {
+      if (b.dents && b.dents.length && b.root) { repairModel(b.root); b.dents = []; }
+    }
   }
 }
 
@@ -1642,6 +1693,89 @@ function resolveVehicleCollisions() {
       e.crashCd = now + 400;
       localCrashCd = now + 250;
       crashLocal(hit, mb, dims, Math.max(aLo, bLo), Math.min(aHi, bHi), closing);
+    }
+  }
+}
+
+// ---------- AI samolyot/vertolyot bilan to'qnashuv ----------
+// Samolyot/vertolyot (yoki mashina) AI botga tegsa: ikkalasi ham pachoq bo'ladi (bot modeli ham, mening ulovim ham),
+// ovoz chiqadi, kuchli urilsa kichik portlash bo'ladi, bot esa tezligini yo'qotib, bir muddat boshqaruvni yomon ushlaydi.
+// Balandlik hisobga olinadi: tepada uchib o'tsam tegmaydi. Bot pachoqlari o'lim (respawn) da tiklanadi.
+function airBotDims(bot) {
+  const root = bot.root;
+  if (!root) return null;
+  if (!root.userData.crashDims) root.userData.crashDims = measureModel(root);
+  return root.userData.crashDims;
+}
+
+// Botning urilgan joyini pachoqlaydi. (hit.nx, hit.nz) - mendan bot tomonga yo'nalish: bot uchun teskari tomon (men tomon).
+function crashAirBot(bot, hit, eb, dims, closing, lo, hi) {
+  if (!bot.root) return;
+  if (!bot.dents) bot.dents = [];
+  if (bot.dents.length >= MAX_DENTS) return;
+  const g = bot.group;
+  const h = g.rotation.y;
+  const c = Math.cos(h), sn = Math.sin(h);
+  const nx = -hit.nx, nz = -hit.nz;
+  const ra = eb.hw * Math.abs(nx * c - nz * sn) + eb.hd * Math.abs(nx * sn + nz * c);
+  let lx = nx * ra * c - nz * ra * sn;
+  let lz = nx * ra * sn + nz * ra * c;
+  lx = clamp(lx, -eb.hw, eb.hw);
+  lz = clamp(lz, -eb.hd, eb.hd);
+  const hg = eb.maxY - eb.minY;
+  const ly = clamp(((lo + hi) / 2) - g.position.y, eb.minY + hg * 0.2, eb.minY + hg * 0.8);
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const dent = { x: r1(lx), y: r1(ly), z: r1(lz), s: clamp(Math.round(closing / 2.2), 4, 10) };
+  bot.dents.push(dent);
+  applyDent(bot.root, dent, { dims, skip: bot.spin || [] });
+}
+
+function resolveAirBotCollisions() {
+  if (!airFleet || !airFleet.bots.length) return;
+  const dims = localDims(vehicleMode);
+  if (!dims) return;
+  const mb = bodyFrom(dims, vehicleMode);
+  const now = performance.now();
+  for (const bot of airFleet.bots) {
+    const g = bot.group;
+    if (!g.visible) continue;
+    const bd = airBotDims(bot);
+    if (!bd) continue;
+    const eb = bodyFrom(bd, bot.kind);
+    const dx = g.position.x - car.x, dz = g.position.z - car.z;
+    const reach = Math.hypot(mb.hw, mb.hd) + Math.hypot(eb.hw, eb.hd);
+    if (dx * dx + dz * dz > reach * reach) continue;
+    const aLo = car.y + mb.minY, aHi = car.y + mb.maxY;
+    const bLo = g.position.y + eb.minY, bHi = g.position.y + eb.maxY;
+    if (aLo >= bHi - 0.3 || bLo >= aHi - 0.3) continue;   // kamida 30 sm balandlikda kesishsin
+    const hit = obbHit(obbOf(car.x, car.z, car.h, mb.hw, mb.hd), obbOf(g.position.x, g.position.z, g.rotation.y, eb.hw, eb.hd));
+    if (!hit) continue;
+
+    // Bot fizikasiz (o'zi uchadi), shuning uchun faqat men itariladi
+    car.x -= hit.nx * (hit.pen + 0.05);
+    car.z -= hit.nz * (hit.pen + 0.05);
+    const closing = (car.vx - (bot.vx || 0)) * hit.nx + (car.vz - (bot.vz || 0)) * hit.nz;   // yaqinlashish tezligi (m/s)
+    if (closing > 0) {
+      const j = closing * 0.8;
+      car.vx -= hit.nx * j;
+      car.vz -= hit.nz * j;
+    }
+    if (closing > 1.5 && now > bot.crashCd && now > localCrashCd) {
+      bot.crashCd = now + 450;
+      localCrashCd = now + 300;
+      const force = Math.max(closing, 9);                 // sekin tegsa ham ko'rinadigan pachoq
+      const lo = Math.max(aLo, bLo), hi = Math.min(aHi, bHi);
+      crashLocal(hit, mb, dims, lo, hi, force);           // mening ulovim pachoq
+      crashAirBot(bot, hit, eb, bd, force, lo, hi);       // bot ham pachoq
+      airFleet.bump(bot, hit.nx, hit.nz, closing);
+      if (closing > 14) {                                  // kuchli zarba: kichik portlash va silkinish
+        rocketSystem.explode((car.x + g.position.x) / 2, (lo + hi) / 2, (car.z + g.position.z) / 2, 'air', { blast: 6, power: 0.5 });
+        const cp = camera.position;
+        const ex = g.position.x - cp.x, ez = g.position.z - cp.z;
+        const ed = Math.hypot(ex, g.position.y - cp.y, ez);
+        const rx = -Math.cos(car.h), rz = Math.sin(car.h);
+        playExplosionSound(ed, ((ex * rx + ez * rz) / Math.max(ed, 1)) * 0.8);
+      }
     }
   }
 }
@@ -1910,6 +2044,7 @@ function fireRocket(rapid = false) {
   mesh.visible = false;
   m.reloadAt[i] = now + (rapid ? ROCKET_RAPID_INTERVAL * 2 : cooldownMs);
   playRocketLaunchSound(0, 0);
+  if (airFleet && AIR_COMBAT_MODES.includes(vehicleMode)) airFleet.alert(undefined, { x: _rw.x, y, z: _rw.z, h, pitch });   // jangovor samolyot/vertolyotlar uchib kelib shu o'yinchiga hujum qiladi
   const r1 = (v) => Math.round(v * 10) / 10;
   lastRocketCode = `${++rocketSeq},${r1(_rw.x)},${r1(y)},${r1(_rw.z)},${Math.round(h * 1000) / 1000},${r1(vf)},${m.size},${Math.round(pitch * 1000) / 1000},${m.power},${m.blast},${range},${m.heavy ? 1 : 0},${infinite ? 1 : 0}`;
 }

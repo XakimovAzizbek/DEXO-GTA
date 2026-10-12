@@ -165,6 +165,8 @@ body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none
 .air-label { display: block; margin-top: 10px; color: var(--hazard); font-size: 13px; font-weight: 600; }
 .mini--ai { border-color: var(--sign-green); color: #7ee2a0; }
 .mini--model { padding: 0 12px; }
+.mini--combat { border-color: #ff6b5e; color: #ff9a90; }
+.mini--combat.is-active { background: rgba(255, 77, 77, 0.18); outline-color: #ff4d4d; }
 
 /* Tanlash paneli: tugmalar ko'p bo'lsa ichida aylantiriladi (GLB uy sozlamalari sig'masa ham) */
 .panel[data-panel="select"] { max-height: 42vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }

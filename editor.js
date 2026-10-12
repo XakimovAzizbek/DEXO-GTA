@@ -12,7 +12,7 @@ import { showSaveDialog } from './savefile.js';
 import { cachedFetchArrayBuffer, evictGLBCache } from './glbCache.js';
 import {
   AIR_TYPES, AIR_MAX_POINTS, AIR_MAX_PATHS, AIR_MAX_BOTS,
-  normalizeAirPath, buildAirObstacles, checkAirPath, sampleAirPath, groundAt, padBlocked,
+  normalizeAirPath, buildAirObstacles, checkAirPath, sampleAirPath, groundAt, padBlocked, findParkSpot,
 } from './airFleet.js';
 
 const $ = (id) => document.getElementById(id);
@@ -574,6 +574,7 @@ let airPad = null;            // uchish/qo'nish joyi [x, z]
 let airPadMode = false;       // true bo'lsa, keyingi bosish joyni belgilaydi
 let airRange = 1;             // AI masofa darajasi (1 = eng yaqin)
 let airBusy = false;          // AI hisoblayotganda ikkinchi marta bosilmasin
+let airCombat = false;        // true bo'lsa: yangi yo'llar (va faol yo'l) JANGOVOR bo'ladi - o'yinchi raketa otsa hujum qiladi
 const AIR_RANGE_MAX = 10;
 const AIR_AI_BATCH = 10;
 const AIR_ICON = { plane: '✈️', heli: '🚁' };
@@ -604,6 +605,8 @@ function airData() {
     if (p.model) o.model = p.model;
     if (p.pad) o.pad = p.pad.slice();
     if (p.speed) o.speed = p.speed;
+    if (p.combat) o.combat = true;
+    if (p.post) o.post = true;
     return o;
   });
 }
@@ -679,6 +682,7 @@ function drawAir() {
   const badPts = [];
   airPaths.forEach((p, idx) => {
     const T = AIR_TYPES[p.type];
+    const col = p.combat ? 0xff4d4d : T.color;   // jangovor yo'l qizil
     const active = idx === airActive;
     let res = null;
     if (p.pts.length >= 3) {
@@ -695,22 +699,38 @@ function drawAir() {
     if (p.pts.length >= 2) {
       const line = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints(samples),
-        new THREE.LineBasicMaterial({ color: T.color, transparent: true, opacity: active ? 1 : 0.5 }),
+        new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: active ? 1 : 0.5 }),
       );
       airGroup.add(line);
     }
     const drops = [];
     p.pts.forEach((q, k) => {
       drops.push(new THREE.Vector3(q[0], 0.1, q[1]), new THREE.Vector3(q[0], q[2], q[1]));
-      const dot = new THREE.Mesh(airDotGeo, new THREE.MeshBasicMaterial({ color: k === 0 ? 0xffffff : T.color }));
+      const dot = new THREE.Mesh(airDotGeo, new THREE.MeshBasicMaterial({ color: k === 0 ? 0xffffff : col }));
       dot.position.set(q[0], q[2], q[1]);
       dot.scale.setScalar(active ? (k === 0 ? 3 : 2.2) : 1.4);
       airGroup.add(dot);
     });
     airGroup.add(new THREE.LineSegments(
       new THREE.BufferGeometry().setFromPoints(drops),
-      new THREE.LineBasicMaterial({ color: T.color, transparent: true, opacity: active ? 0.45 : 0.2 }),
+      new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: active ? 0.45 : 0.2 }),
     ));
+
+    if (p.post && p.pts.length) {   // jangovor joy: yerdagi qizil halqa va ustun
+      const q0 = p.pts[0];
+      const gy0 = groundAt(obs, q0[0], q0[1]);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(p.type === 'heli' ? 7 : 12, p.type === 'heli' ? 9.5 : 15, 40).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xff4d4d, side: THREE.DoubleSide, depthTest: false, transparent: true, opacity: active ? 1 : 0.6 }),
+      );
+      ring.position.set(q0[0], gy0 + 0.25, q0[1]);
+      ring.renderOrder = 6;
+      airGroup.add(ring);
+      airGroup.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(q0[0], gy0, q0[1]), new THREE.Vector3(q0[0], gy0 + 30, q0[1])]),
+        new THREE.LineBasicMaterial({ color: 0xff4d4d }),
+      ));
+    }
 
     // GLB modelning o'zi yo'lning boshida (uchish joyida) ko'rinadi
     if (p.model && p.pts.length) {
@@ -718,7 +738,7 @@ function drawAir() {
       if (src && typeof src !== 'string') {
         const m = src.clone(true);
         const q0 = p.pts[0];
-        m.position.set(q0[0], q0[2], q0[1]);
+        m.position.set(q0[0], p.post ? groundAt(obs, q0[0], q0[1]) : q0[2], q0[1]);
         if (samples.length > 1) m.rotation.y = Math.atan2(samples[1].x - samples[0].x, samples[1].z - samples[0].z);
         airGroup.add(m);
       } else ensureAirPreview(p.model);
@@ -763,6 +783,10 @@ function updateAirUI() {
   $('airPadSet').classList.toggle('is-active', airPadMode);
   $('airPadSet').textContent = airPadMode ? '📍 Xaritaga bosing…' : (airPad ? '📍 Joyni o‘zgartirish' : '📍 Joy belgilash');
   $('airPadClear').disabled = !airPad;
+  if ($('airCombat')) {
+    $('airCombat').textContent = airCombat ? '⚔️ Jangovor: yoqilgan' : '⚔️ Jangovor: o‘chiq';
+    $('airCombat').classList.toggle('is-active', airCombat);
+  }
   if ($('airClaudeKey')) $('airClaudeKey').textContent = getClaudeKey() ? '🧠 Claude 5.5: yoqilgan' : '🔑 Claude AI kaliti';
   for (const id of ['airAuto', 'airPadAI', 'airFar', 'airNear']) $(id).disabled = airBusy;
 
@@ -787,8 +811,9 @@ function updateAirUI() {
       : 'Xaritaga ketma-ket bosing: har bosish bitta yo‘l nuqtasi (oq nuqta - boshi). Kamida 3 nuqta kerak. Yoki “🤖 AI yo‘llar” ni bosing.';
   } else {
     const st = airStatus[airActive];
-    const head = `${AIR_ICON[p.type]} ${p.model ? `${p.model}, ` : ''}${p.pts.length} nuqta, ${p.count} bot${p.pad ? ', 🛫 uchish/qo‘nish bor' : ''}. `;
-    if (!st) text = head + `Yo‘l yopilishi uchun yana ${3 - p.pts.length} nuqta kerak.`;
+    const head = `${AIR_ICON[p.type]} ${p.model ? `${p.model}, ` : ''}${p.pts.length} nuqta, ${p.count} bot${p.pad ? ', 🛫 uchish/qo‘nish bor' : ''}${p.combat ? ', ⚔️ jangovor' : ''}. `;
+    if (p.post) text = `${AIR_ICON[p.type]} ${p.model ? `${p.model}, ` : ''}⚔️ jangovor joy, ${p.count} bot. Faqat jang paytida uchadi, bo‘lmasa shu joyda jim turadi. To‘siq tekshirilmaydi: AI o‘zi hisoblaydi.`;
+    else if (!st) text = head + `Yo‘l yopilishi uchun yana ${3 - p.pts.length} nuqta kerak.`;
     else if (st.ok) text = head + '✅ Yo‘l xavfsiz.';
     else text = head + `⚠️ ${st.bad.length} joyda to‘siqqa yaqin (qizil nuqta). “Avto-tuzatish” ni bosing.`;
   }
@@ -801,9 +826,9 @@ function updateAirUI() {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'mini' + (i === airActive ? ' is-active' : '');
-    b.textContent = `${AIR_ICON[q.type]} ${i + 1}${q.pad ? ' 🛫' : ''}`;
+    b.textContent = `${AIR_ICON[q.type]} ${i + 1}${q.pad ? ' 🛫' : ''}${q.combat ? ' ⚔️' : ''}${q.post ? ' 📍' : ''}`;
     b.addEventListener('click', () => {
-      airActive = i; airType = q.type; airCount = q.count; airModel = q.model || null;
+      airActive = i; airType = q.type; airCount = q.count; airModel = q.model || null; airCombat = !!q.combat;
       airAlt = q.pts.length ? Math.round(q.pts[q.pts.length - 1][2]) : AIR_TYPES[q.type].defAlt;
       drawAir();
     });
@@ -817,16 +842,39 @@ function setAirPad(x, z) {
   airPad = [clampX(snapV(x)), clampZ(snapV(z))];
   airPadMode = false;
   saveAirPad();
-  if (padBlocked(airObs(), airPad[0], airPad[1])) toast('Diqqat: bu joyda to‘siq (uy, daraxt yoki tog‘) bor. Bo‘sh joyni belgilang.', 4500);
+  if (airCombat) toast('⚔️ Jangovor joy belgilandi. Endi “🛫 AI: shu joydan” ni bosing: AI to‘siq bo‘lsa ham bo‘sh joyni o‘zi topadi.', 4000);
+  else if (padBlocked(airObs(), airPad[0], airPad[1])) toast('Diqqat: bu joyda to‘siq (uy, daraxt yoki tog‘) bor. Bo‘sh joyni belgilang.', 4500);
   else toast('Uchish/qo‘nish joyi belgilandi. Endi “🛫 AI: shu joydan” ni bosing', 3500);
   drawAir();
 }
+// Jangovor joy: yo'l EMAS, faqat bitta joy. Bot shu yerda jim turadi, jang paytida esa istalgan joyga uchib boradi.
+// Joy band bo'lsa (uy, daraxt, tog', boshqa bot) AI atrofdan eng yaqin bo'sh joyni o'zi topadi - xato xabari chiqmaydi.
+function addCombatPost(x, z) {
+  const opt = currentAirOption();
+  const used = airPaths.filter((q) => q.post && q.pts.length).map((q) => ({ x: q.pts[0][0], z: q.pts[0][1] }));
+  const bnds = { x0: -bounds.w, x1: bounds.e, z0: -bounds.n, z1: bounds.s };
+  const px = clampX(snapV(x)), pz = clampZ(snapV(z));
+  const spot = findParkSpot(airObs(), px, pz, opt.kind, used, bnds);
+  const post = { type: opt.kind, count: airCount, combat: true, post: true, pts: [[spot.x, spot.z, 0.2]] };
+  if (opt.name) post.model = opt.name;
+  airPaths.push(post);
+  airActive = airPaths.length - 1;
+  airType = opt.kind;
+  const moved = Math.round(Math.hypot(spot.x - px, spot.z - pz));
+  toast(moved > 6
+    ? `⚔️ Jangovor joy qo‘shildi. Belgilangan joy band edi: AI ${moved} m narida bo‘sh joy topdi ✅`
+    : '⚔️ Jangovor joy qo‘shildi ✅ Bot shu yerda jim turadi, jang paytida uchadi.', 4000);
+  airChanged();
+}
+
 function addAirPoint(x, z) {
   if (airPadMode) { setAirPad(x, z); return; }
+  if (airCombat) { addCombatPost(x, z); return; }
   let p = airPaths[airActive];
   if (!p) {
     p = { type: airType, count: airCount, pts: [] };
     if (airModel) p.model = airModel;
+    if (airCombat) p.combat = true;
     airPaths.push(p);
     airActive = airPaths.length - 1;
   }
@@ -863,6 +911,7 @@ $('airUndoPt').addEventListener('click', () => {
 function shiftAirPath(d) {
   const p = airPaths[airActive];
   if (!p) { toast('Avval pastdagi ro‘yxatdan yo‘lni tanlang'); return; }
+  if (p.post) { toast('Jangovor joy yerda turadi: balandlik kerak emas'); return; }
   const T = AIR_TYPES[p.type];
   p.pts.forEach((q, i) => {
     if (p.pad && i === 0) return;   // uchish/qo'nish nuqtasi yerda qoladi
@@ -883,6 +932,7 @@ $('airFix').addEventListener('click', () => {
   const obs = airObs();
   const p = airPaths[airActive];
   if (p) {
+    if (p.post) { toast('Jangovor joyni tuzatish shart emas: AI o‘zi hisoblaydi ✅'); return; }
     if (p.pts.length < 3) {
       const need = 3 - p.pts.length;
       toast(`Bu yo‘lda hozir ${p.pts.length} ta nuqta bor. Tuzatish uchun kamida 3 ta kerak: xaritaga yana ${need} ta nuqta bosing.`, 4500);
@@ -898,7 +948,7 @@ $('airFix').addEventListener('click', () => {
   let checked = 0, raised = 0;
   const failed = [];
   airPaths.forEach((q, i) => {
-    if (q.pts.length < 3) return;
+    if (q.post || q.pts.length < 3) return;
     const res = checkAirPath(q, obs, true);
     q.pts = res.pts;
     checked++;
@@ -1244,7 +1294,7 @@ async function addAiLoops() {
     let added = 0;
     for (let i = 0; i < AIR_AI_BATCH; i++) {
       const best = genFreeLoop(opt, obs, others);
-      if (best) { airPaths.push(best.path); others.push(best.samples); added++; }
+      if (best) { if (airCombat) best.path.combat = true; airPaths.push(best.path); others.push(best.samples); added++; }
       await tick();
     }
     if (!added) { toast('Xavfsiz yo‘l topilmadi: zona kichik yoki to‘siqlar juda baland. Zonani kengaytirib ko‘ring.', 5000); return; }
@@ -1289,6 +1339,7 @@ async function addPadRoute(level) {
       toast('Xavfsiz yo‘l topilmadi: joy atrofi to‘siqlar bilan o‘ralgan yoki juda baland tog‘lar bor. Joyni boshqa yerga ko‘chiring.', 6000);
       return false;
     }
+    if (airCombat) best.path.combat = true;
     airPaths.push(best.path);
     airActive = airPaths.length - 1;
     airType = best.path.type;
@@ -1311,7 +1362,34 @@ $('airPadSet').addEventListener('click', () => {
   drawAir();
 });
 $('airPadClear').addEventListener('click', () => { airPad = null; airPadMode = false; saveAirPad(); drawAir(); });
-$('airPadAI').addEventListener('click', () => { addPadRoute(airRange); });
+$('airPadAI').addEventListener('click', () => {
+  // Jangovor bot: yo'l hisoblanmaydi va to'siq haqida xabar chiqmaydi - AI belgilangan joy atrofidan bo'sh joy topadi.
+  // Bot jangda xaritaning istalgan joyiga (zona chegarasigacha) o'zi uchib boradi.
+  if (airCombat) {
+    if (!airPad) { toast('Avval “📍 Joy belgilash” ni bosib, xaritada jangovor botlar turadigan joyni belgilang.', 4500); return; }
+    addCombatPost(airPad[0], airPad[1]);
+    return;
+  }
+  addPadRoute(airRange);
+});
+if ($('airCombat')) {
+  $('airCombat').addEventListener('click', () => {
+    airCombat = !airCombat;
+    const p = airPaths[airActive];
+    if (p && !p.post) { if (airCombat) p.combat = true; else delete p.combat; scheduleSave(); }   // faol yo'l tanlangan bo'lsa unga ham qo'llanadi (jangovor joy o'zgarmaydi)
+    if (airCombat) {
+      const opt = currentAirOption();
+      if (opt && opt.entry && !Number(opt.entry.rocket)) {
+        toast('⚔️ Jangovor yoqildi (bot jim turadi, jang paytida uchadi). Diqqat: bu modelda raketa o‘rnatilmagan (airport.txt: rocket: 1), standart joydan otadi.', 6000);
+      } else {
+        toast('⚔️ Jangovor yoqildi. Xaritaga bosing yoki “📍 Joy belgilash” + “🛫 AI: shu joydan”: bot shu joyda jim turadi, jang paytida uchadi.', 5500);
+      }
+    } else {
+      toast('Jangovor o‘chirildi', 1800);
+    }
+    drawAir();
+  });
+}
 if ($('airClaudeKey')) {
   $('airClaudeKey').addEventListener('click', () => {
     const cur = getClaudeKey();
