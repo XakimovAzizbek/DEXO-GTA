@@ -1,4 +1,12 @@
 name: BYD
+car: 2024_byd_atto_2-v1.glb
+length: 9.8
+camdist: 12.5
+camheight: 4.9
+aimy: 4
+fov: 58
+
+name: BYD CHAZOR
 car: 2025_byd_seal_5_dm-i_chazor_king_destroyer_05-v1.glb
 length: 9.6
 camheight: 4.3
