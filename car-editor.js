@@ -255,6 +255,7 @@ function rebuildLights() {
   if (lightsObj) { carTilt.remove(lightsObj.group); lightsObj.dispose(); }
   lightsObj = createCarLights(lights, { length: profile.length, lift: profile.lift });
   carTilt.add(lightsObj.group);
+  if (fitted) lightsObj.attach(fitted);
   lightsObj.update(lightPreview);
 }
 
@@ -364,6 +365,7 @@ function refit() {
   if (fitted) carTilt.remove(fitted);
   fitted = fitCarModel(modelScene, profile);
   carTilt.add(fitted);
+  if (lightsObj) lightsObj.attach(fitted);
 }
 
 // ---------- Raketa: qo'lda surish, burchak, kuch, portlash ----------

@@ -604,6 +604,7 @@ async function setupCar(setText, setProgress) {
       const built = await loadCarModel(entry, setProgress);
       built.group.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
       carGroup.add(built.group);
+      carLights.attach(built.group);   // chiroq mashinaning o'z yuzasida yonadi
       carModel = built;
       setupRocketMounts('car', entry);   // car muharririda qo'yilgan raketa
       return;
