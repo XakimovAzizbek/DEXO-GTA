@@ -1,20 +1,58 @@
 name: ROLLS ROYSE
 car: rolls_royce_ghost-v1.glb
+length: 11.6
+camdist: 11.5
+camheight: 5.4
+aimy: 2.3
+fov: 65
+fovspeed: 0.05
+follow: 20
 
-name: LAMBORGINI
+name: LAMBORGINI1
 car: ps1_low-poly_2021_lamborghini_huracan_sto-v1.glb
+length: 10.1
+camdist: 11.5
+camheight: 6.4
+aimy: 2.4
+fovspeed: 0.05
+follow: 20
 
-name: LAMBORGINI
+name: LAMBORGINI2
 car: lamborgini_terzo-v1.glb
+length: 9.3
+rotate: 180
+camheight: 4.9
+aimy: 2.3
+fov: 58
+fovspeed: 0.05
+follow: 20
+tilt: 2.5
 
-name: LAMBORGINI
+name: LAMBORGINI URUS
 car: lamborghini_urus_2018-v1.glb
+length: 10.3
+rotate: 180
+camheight: 5.7
+aimy: 2.5
+fov: 62
+fovspeed: 0.05
+follow: 20
 
-name: LAMBORGINI
+name: LAMBORGINI3
 car: lamborghini_fenomeno_2025-v1.glb
+length: 10.4
+camdist: 11.5
+camheight: 4.4
+aimy: 3.5
+fov: 63
+fovspeed: 0.05
+follow: 20
 
 name: FERRARI
 car: ferrari_laferrari-v1.glb
+length: 10
+camheight: 4.7
+aimy: 2.7
 
 name: CHEVROLET TAHOE
 car: ps1_low-poly_2021_chevrolet_tahoe_z71-v1.glb
