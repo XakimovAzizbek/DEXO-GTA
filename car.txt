@@ -1,3 +1,21 @@
+name: ROLLS ROYSE
+car: rolls_royce_ghost-v1.glb
+
+name: LAMBORGINI
+car: ps1_low-poly_2021_lamborghini_huracan_sto-v1.glb
+
+name: LAMBORGINI
+car: lamborgini_terzo-v1.glb
+
+name: LAMBORGINI
+car: lamborghini_urus_2018-v1.glb
+
+name: LAMBORGINI
+car: lamborghini_fenomeno_2025-v1.glb
+
+name: FERRARI
+car: ferrari_laferrari-v1.glb
+
 name: CHEVROLET TAHOE
 car: ps1_low-poly_2021_chevrolet_tahoe_z71-v1.glb
 length: 11.1
