@@ -23,3 +23,7 @@ rockety: 1.85
 rocketz: -0.85
 rocketsize: 5.6
 speed: 3
+
+name: AIRPLANE
+airplane: airplane2-v1.glb
+length: 38
