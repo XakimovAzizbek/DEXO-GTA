@@ -8,7 +8,7 @@ aimy: 1.9
 fov: 65
 fovspeed: 0.05
 follow: 20
-light: shape=round func=brake color=#ff2a2a x=0.66 y=1.22 z=-2.2 size=1 mirror=1
+light: shape=round func=brake color=#ff2a2a x=0.66 y=1.2 z=-2.08 size=1 mirror=1
 
 name: BYD
 car: 2024_byd_atto_2-v1.glb
