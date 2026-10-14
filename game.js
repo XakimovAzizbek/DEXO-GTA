@@ -19,7 +19,7 @@ import { unlockCarAudio, updateCarAudio, setCarAudioActive, updateHorn } from '.
 import { unlockAirportAudio, updateHeliAudio, updatePlaneAudio, stopAirportAudio } from './airportAudio.js';
 import { initRemoteAudio, createRemoteVoice, REMOTE_HEAR_RANGE, playCrashSound, playExplosionSound, playRocketLaunchSound } from './remoteAudio.js';
 import { createRocketSystem } from './rocket.js';
-import { MAX_DENTS, measureModel, applyDent, repairModel, disposeCrash, encodeDents, decodeDents } from './crash.js';
+import { MAX_DENTS, measureModel, applyDent, repairModel, disposeCrash, encodeDents, decodeDents, warmCrashModel } from './crash.js';
 // Eslatma: Firebase bu yerda ATAYLAB statik import qilinmagan — game.js offline o'yin (game.html) uchun
 // ham ishlatiladi, va u hech qachon online/Firebase'ga muhtoj bo'lmasligi kerak. Shu sababli Firebase
 // faqat pastdagi startMultiplayer() chaqirilganda (ya'ni faqat online o'yinda, player-game.js orqali)
@@ -51,6 +51,11 @@ renderer.setPixelRatio(pixelRatio);
 const shadowsOn = settings.shadows && quality !== 'low';
 renderer.shadowMap.enabled = shadowsOn;
 renderer.shadowMap.type = quality === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+// Soya xaritasi har kadrda emas, 2-4 kadrda bir yangilanadi (frame() ichida) - sifat o'zgarmaydi, yuk ancha kamayadi.
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
+let shadowTick = 0, shadowEvery = 2, frameEma = 1 / 60;
+const SHADOW_SNAP = 3;   // quyosh nishoni 3 m qadam bilan suriladi - soya chetlari titramaydi
 
 const scene = new THREE.Scene();
 const SKY = '#a9d0ea';
@@ -138,26 +143,68 @@ for (const o of objects) {
   byType.get(key).push(o);
 }
 const dummy = new THREE.Object3D();
+// Har bir tur (daraxt, yo'l, pandus ...) 192 m li katakchalarga bo'linadi: har katakcha alohida InstancedMesh.
+// Shunda kamera va soya kamerasi ko'rmaydigan katakchalar chizilmaydi (oldin hamma 600+ obyekt har kadrda chizilardi),
+// tuman ortida qolgan uzoq katakchalar esa umuman o'chiriladi (updateWorldChunks).
+const CHUNK = 192;
+const worldChunks = [];   // { mesh, cx, cz, r }
+const canCull = typeof THREE.InstancedMesh.prototype.computeBoundingSphere === 'function';
 for (const list of byType.values()) {
   const type = list[0].t;
   const kind = CATALOG[type].kind;
   const mat = getMaterial(kind, 0);
   weather.patch(mat, { snowMax: SNOW_MAX[kind] ?? 1, sway: kind === 'tree' });
-  const mesh = new THREE.InstancedMesh(getGeometry(type, list[0].y || 0, list[0].bend || 0), mat, list.length);
-  list.forEach((o, i) => {
-    dummy.position.set(o.x, 0, o.z);
-    dummy.rotation.set(0, o.r, 0);
-    dummy.scale.setScalar(o.s);
-    dummy.updateMatrix();
-    mesh.setMatrixAt(i, dummy.matrix);
-    mesh.setColorAt(i, tintColor(kind, o.c));
-  });
-  mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  mesh.frustumCulled = false;
-  mesh.castShadow = shadowsOn && kind !== 'road' && kind !== 'land';
-  mesh.receiveShadow = shadowsOn;
-  scene.add(mesh);
+  const geo = getGeometry(type, list[0].y || 0, list[0].bend || 0);
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  const gr = geo.boundingSphere ? geo.boundingSphere.radius + geo.boundingSphere.center.length() : 12;
+  const cells = new Map();
+  for (const o of list) {
+    const key = `${Math.floor(o.x / CHUNK)},${Math.floor(o.z / CHUNK)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(o);
+  }
+  for (const cell of cells.values()) {
+    const mesh = new THREE.InstancedMesh(geo, mat, cell.length);
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, maxS = 0;
+    cell.forEach((o, i) => {
+      dummy.position.set(o.x, 0, o.z);
+      dummy.rotation.set(0, o.r, 0);
+      dummy.scale.setScalar(o.s);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      mesh.setColorAt(i, tintColor(kind, o.c));
+      if (o.x < minX) minX = o.x;
+      if (o.x > maxX) maxX = o.x;
+      if (o.z < minZ) minZ = o.z;
+      if (o.z > maxZ) maxZ = o.z;
+      if (o.s > maxS) maxS = o.s;
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (canCull) {
+      mesh.computeBoundingSphere();
+      if (mesh.boundingSphere) mesh.boundingSphere.radius += 4;   // daraxt chayqalishi uchun zaxira
+      mesh.frustumCulled = true;
+    } else {
+      mesh.frustumCulled = false;   // eski three versiyasi - xavfsiz variant
+    }
+    mesh.castShadow = shadowsOn && kind !== 'road' && kind !== 'land';
+    mesh.receiveShadow = shadowsOn;
+    scene.add(mesh);
+    worldChunks.push({
+      mesh,
+      cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2,
+      r: Math.hypot(maxX - minX, maxZ - minZ) / 2 + gr * (maxS || 1) + 6,
+    });
+  }
+}
+let chunkTimer = 0;
+function updateWorldChunks(dt) {
+  chunkTimer -= dt;
+  if (chunkTimer > 0) return;
+  chunkTimer = 0.25;
+  const lim = (scene.fog ? scene.fog.far : 340) + 60;   // tuman ortidagi narsa baribir ko'rinmaydi
+  for (const c of worldChunks) c.mesh.visible = Math.hypot(c.cx - car.x, c.cz - car.z) - c.r < lim;
 }
 // To'siqlarning taxminiy balandligi (metr) - samolyot/vertolyot tepasidan uchib o'tadimi yoki uriladimi shuni aniqlash uchun.
 const COLLIDER_TOP = {
@@ -574,6 +621,7 @@ const VEHICLE_ORDER = ['car', 'heli', 'plane'];
 const VEHICLE_ICON = { car: '🚗', heli: '🚁', plane: '✈️' };
 function setVehicle(mode) {
   if (!VEHICLE_TYPES[mode] || mode === vehicleMode) return;
+  { const r = localRoot(mode); if (r) warmCrashModel(r); }   // ko'rinishidan oldin tayyorlanadi - urilganda qayta kompilyatsiya bo'lmaydi
   const wasFlying = VEHICLE_TYPES[vehicleMode].flying;
   vehicleMode = mode;
   applyVehicleType(mode);
@@ -1212,6 +1260,13 @@ const mctx = mm.getContext('2d');
 const RADAR_RADIUS = 70;
 const LAND_COLOR = { land_grass: '#3f6b34', land_sand: '#c9b77f', land_dirt: '#7a5f40', land_asphalt: '#454b55' };
 const RECT_COLOR = { road: '#3a3f47', ramp: '#59606b', house: '#e9dcc3', ridge: '#8a9580' };
+const MM_PASSES = ['land', 'road', 'ramp', 'house', 'ridge', 'mountain', 'tree', 'billboard'];
+const mmByPass = new Map(MM_PASSES.map((p) => [p, []]));   // obyektlar bir marta turlarga ajratiladi (oldin har kadrda 8 marta hammasi aylanardi)
+for (const o of objects) {
+  const def = CATALOG[o.t];
+  if (def && mmByPass.has(def.kind)) mmByPass.get(def.kind).push(o);
+}
+let mmTimer = 0;
 function sizeMinimap() {
   const css = mm.clientWidth || 132;
   mm.width = Math.round(css * pixelRatio);
@@ -1231,10 +1286,9 @@ function drawMinimap() {
   mctx.setTransform(-c * k, -s * k, s * k, -c * k, size / 2, size / 2);
   mctx.translate(-car.x, -car.z);
   const reach = RADAR_RADIUS * 1.6;
-  for (const pass of ['land', 'road', 'ramp', 'house', 'ridge', 'mountain', 'tree', 'billboard']) {
-    for (const o of objects) {
+  for (const pass of MM_PASSES) {
+    for (const o of mmByPass.get(pass)) {
       const def = CATALOG[o.t];
-      if (def.kind !== pass) continue;
       const ext = (def.r || Math.max(def.hw || 0, def.hd || 0)) * o.s;
       if (Math.abs(o.x - car.x) > reach + ext || Math.abs(o.z - car.z) > reach + ext) continue;
       if (pass === 'tree' || pass === 'mountain') {
@@ -1443,10 +1497,19 @@ let last = performance.now(), fpsAcc = 0, fpsFrames = 0, shownSpeed = -1;
 let prevVf = 0, tiltPitch = 0, tiltRoll = 0, tiltSlope = 0;
 
 function frame(now) {
-  const dt = Math.min((now - last) / 1000, 0.05);
+  const rawDt = (now - last) / 1000;
+  const dt = Math.min(rawDt, 0.05);
   last = now;
 
-  for (const tl of trafficLightEntries) updateTrafficLightGroup(tl.group, tl.data, now / 1000);
+  // Kadr vaqtiga qarab soya yangilanish chastotasi o'zi moslashadi (sifat va soya o'chmaydi, faqat yangilanish siyraklashadi)
+  frameEma += (Math.min(rawDt, 0.25) - frameEma) * 0.05;
+  shadowEvery = frameEma > 1 / 30 ? 4 : frameEma > 1 / 45 ? 3 : 2;
+
+  for (const tl of trafficLightEntries) {   // faqat yaqindagi svetoforlar yangilanadi (holati vaqtdan hisoblanadi - qaytganda to'g'ri bo'ladi)
+    const tx = tl.data.x - car.x, tz = tl.data.z - car.z;
+    if (tx * tx + tz * tz < 250 * 250) updateTrafficLightGroup(tl.group, tl.data, now / 1000);
+  }
+  updateWorldChunks(dt);
 
   if (!paused) {
     updateWheel(dt);
@@ -1486,12 +1549,14 @@ function frame(now) {
 
     placeCamera(false, dt);
     rocketSystem.applyShake();   // portlash yaqinida kamera silkinadi
-    sun.position.set(car.x + 40, 70, car.z + 25);
-    sun.target.position.set(car.x, 0, car.z);
+    const sx = Math.round(car.x / SHADOW_SNAP) * SHADOW_SNAP, sz = Math.round(car.z / SHADOW_SNAP) * SHADOW_SNAP;
+    sun.position.set(sx + 40, 70, sz + 25);
+    sun.target.position.set(sx, 0, sz);
 
     const kmh = Math.round(speed * 3.6);
     if (kmh !== shownSpeed) { shownSpeed = kmh; speedEl.textContent = kmh; }
-    drawMinimap();
+    mmTimer -= dt;
+    if (mmTimer <= 0) { mmTimer = 1 / 30; drawMinimap(); }   // radar 30 marta/soniya yetarli
     updateBillboards(dt);
     updateBots(dt);
     updateAirTraffic(dt);
@@ -1502,6 +1567,7 @@ function frame(now) {
     weather.update(dt, car, vehicleMode);
   }
 
+  if (shadowsOn && ++shadowTick >= shadowEvery) { shadowTick = 0; renderer.shadowMap.needsUpdate = true; }
   renderer.render(scene, camera);
 
   if (settings.showFps) {
@@ -2367,6 +2433,7 @@ function attachRemoteModel(entry, root, wheels, spin) {
   entry.wheels = wheels;
   entry.spin = spin;
   entry.mats = prepareRemoteMaterials(root);
+  warmCrashModel(root);
   entry.group.add(root);
   entry.dims = measureModel(root);
   entry.dentApplied = 0;
@@ -2637,6 +2704,8 @@ async function start() {
       await new Promise((r) => setTimeout(r, 1800));
     }
   }
+  // Mashinani pachoqlashga oldindan tayyorlaymiz (yuklash ekranida) - urilganda o'yin qotib qolmasligi uchun
+  { const r = localRoot('car'); if (r) warmCrashModel(r); }
   bar.style.width = '100%';
   renderer.setAnimationLoop(frame);
   setTimeout(() => { $('loading').hidden = true; }, 250);

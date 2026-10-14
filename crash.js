@@ -10,7 +10,7 @@ const origData = new WeakMap();     // mesh -> asl pozitsiya/normal/rang nusxasi
 const ownGeo = new WeakSet();       // bizga tegishli (nusxalangan) geometriyalar
 const prepared = new WeakSet();     // rangli (vertexColors) qilib tayyorlangan modellar
 
-const _v = new THREE.Vector3(), _n = new THREE.Vector3(), _c = new THREE.Vector3(), _dir = new THREE.Vector3();
+const _v = new THREE.Vector3(), _n = new THREE.Vector3(), _c = new THREE.Vector3(), _dir = new THREE.Vector3(), _lc = new THREE.Vector3();
 const _m = new THREE.Matrix4(), _inv = new THREE.Matrix4(), _rootInv = new THREE.Matrix4();
 const _box = new THREE.Box3();
 
@@ -85,9 +85,17 @@ function prepareModel(root) {
   });
 }
 
+// Modelni oldindan tayyorlaydi (geometriya nusxasi + vertex color + shader). Urilish paytida shu ish bo'lsa,
+// o'yin ~1 soniya qotardi - shuning uchun model yuklanganda (yuklash ekranida) bir marta bajariladi.
+export function warmCrashModel(root) {
+  if (root) prepareModel(root);
+}
+
 function snapshot(mesh, g) {
   const copy = (attr) => {
     if (!attr) return null;
+    // Tez yo'l: oddiy Float32 massivni birdaniga nusxalaymiz (oldin har bir uchni alohida o'qirdi)
+    if (!attr.isInterleavedBufferAttribute && attr.array instanceof Float32Array) return attr.array.slice();
     const arr = new Float32Array(attr.count * attr.itemSize);
     for (let i = 0; i < attr.count; i++) {
       arr[i * attr.itemSize] = attr.getX(i);
@@ -138,7 +146,19 @@ export function applyDent(root, dent, opts) {
     const col = g.attributes.color;
     _inv.copy(_m).invert();
 
+    // Tezkor oldindan rad etish: pachoq markazini mesh'ning o'z koordinatasiga o'tkazamiz va uzoq uchlarni
+    // matritsa ko'paytirmasdan o'tkazib yuboramiz (oldin har bir uch uchun matritsa hisoblanardi).
+    _lc.copy(_c).applyMatrix4(_inv);
+    const e = _m.elements;
+    const smin = Math.max(1e-6, Math.min(
+      Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10])));
+    const Rl = (R / smin) * 1.25;   // zaxira bilan (xavfsiz tomondan)
+    const Rl2 = Rl * Rl;
+    const lx = _lc.x, ly = _lc.y, lz = _lc.z;
+
     for (let i = 0; i < pos.count; i++) {
+      const qx = pos.getX(i) - lx, qy = pos.getY(i) - ly, qz = pos.getZ(i) - lz;
+      if (qx * qx + qy * qy + qz * qz >= Rl2) continue;
       _v.fromBufferAttribute(pos, i).applyMatrix4(_m);
       const dx = _v.x - _c.x, dy = _v.y - _c.y, dz = _v.z - _c.z;
       const d2 = dx * dx + dy * dy + dz * dz;
