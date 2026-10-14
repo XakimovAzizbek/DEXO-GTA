@@ -1,29 +1,29 @@
 name: Airplane
 airplane: airport_airplane_2.glb
-length: 38.5
+length: 40
 rotate: 180
 
 name: Helicopter
 helicopter: helicopter.glb
-length: 14.5
+length: 15.5
 rocket: 1
-rocketx: 1
+rocketx: 1.1
 rockety: 0.3
-rocketz: 1.8
+rocketz: 1.9
 rocketsize: 3.2
 speed: 1.1
 
 name: Rafale M
 airplane: dassault_rafale_m_-_fighter_jet_-_free-v1.glb
-length: 15.3
+length: 16.8
 rotate: 180
 rocket: 1
-rocketx: 2.15
-rockety: 1.85
-rocketz: -0.85
+rocketx: 2.3
+rockety: 2
+rocketz: -1
 rocketsize: 5.6
 speed: 3
 
 name: AIRPLANE
 airplane: airplane2-v1.glb
-length: 38
+length: 40
