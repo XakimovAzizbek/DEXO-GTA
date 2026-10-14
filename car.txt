@@ -1,3 +1,34 @@
+name: 2018_ford_everestendeavour
+car: 2018_ford_everestendeavour-draco.glb
+length: 9.9
+rotate: 180
+camheight: 6
+aimy: 2.4
+
+name: bmw_vision_neue_klasse
+car: bmw_vision_neue_klasse-draco.glb
+length: 10.1
+rotate: 180
+camheight: 5.2
+aimy: 1.8
+fov: 59
+light: shape=strip func=brake color=#ff2a2a x=0.52 y=0.9 z=-2.18 size=0.95 mirror=1
+
+name: sports_car
+car: sports_car_1_gta-m-draco.glb
+length: 8.8
+camheight: 5
+aimy: 2.2
+fov: 62
+fovspeed: 0.05
+follow: 20
+
+name: bmw_x3_m40i
+car: 2024_bmw_x3_m40i-v1.glb
+
+name: FERRARI4
+car: 2023_ferrari_purosangue-v1.glb
+
 name: ROLLS ROYSE
 car: rolls_royce_ghost-v1.glb
 length: 11.6
