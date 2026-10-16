@@ -11,6 +11,13 @@
 //         bot dvigatelini yurgizib uchadi va o'yinchiga hujum qiladi: xaritaning istalgan joyiga (zona chegarasigacha)
 //         boradi, to'siqlarni (tog', bino, daraxt) yonidan yoki tepasidan oshib o'tadi. Hujum tugagach joyiga qaytib qo'nadi.
 //         post: true - jangovor "joy" (yo'l emas): pts = [[x, z, 0]] faqat bitta nuqta; to'siq tekshiruvi yo'q.
+//   runway: [[x, z], [x, z], ...] - UCHISH YO'LAGI (faqat samolyot). Editorda qo'lda chiziladi: 1-nuqta = joy (pad), qolganlari chiziq.
+//         Samolyot (jangovor ham, oddiy ham) shu chiziq bo'ylab yuguradi, chiziq tugaganda SEKIN havoga ko'tariladi va o'z
+//         yo'nalishida uchadi. Qo'nganda ham shu chiziqqa tushib, sekin tormozlanib to'xtaydi.
+//
+// ODDIY (jangovor emas) botlar endi haqiqiy pilotdek uchadi: yo'l faqat yo'nalish beradi, bot esa o'zi buriladi (samolyot uchun
+// yonboshlash burchagi cheklangan - katta samolyot keskin burilmaydi), balandlikni sekin o'zgartiradi (cheklangan ko'tarilish/tushish
+// burchagi), uchish joyidan (pad) yugurib uchadi, qaytib sekin tushib qo'nadi va to'xtaydi; vertolyot tik ko'tariladi va tik qo'nadi.
 //
 // Qoidalar:
 //  - Yo'l har doim YOPIQ halqa (kamida 3 nuqta): bot oxirgi nuqtadan keyin yana birinchisiga o'tadi.
@@ -28,10 +35,16 @@ export const AIR_TYPES = {
     // atk: jangovor hujum sozlamalari. speed - hujum tezligi, turn - burilish tezligi (rad/s), climb/sink - ko'tarilish/tushish (m/s),
     // look - to'siqni oldindan ko'rish masofasi (m), minDist - shundan yaqinlashsa o'tib ketib qayta burilish, standoff - vertolyot to'xtab turadigan masofa,
     // fireRange - raketa otish masofasi (m), cone - nishonga shuncha radian aniqlikda qaraganda otadi, cooldown - o'qlar orasi (s), salvo - bir yo'la nechta raketa
-    atk: { speed: 66, accel: 14, turn: 0.85, climb: 18, sink: 24, look: 320, minDist: 150, standoff: 0, fireRange: 720, cone: 0.2, cooldown: 3.4, salvo: 2, breakTime: 4.5 } },
+    atk: { speed: 66, accel: 14, turn: 0.85, climb: 18, sink: 24, look: 320, minDist: 150, standoff: 0, fireRange: 720, cone: 0.2, cooldown: 3.4, salvo: 2, breakTime: 4.5 },
+    // fly: ODDIY (jangovor emas) botning uchish xarakteri. bank - eng katta yonboshlash (rad), climb/dsc - yo'l profilidagi ko'tarilish/tushish
+    // nishabi, sink - haqiqiy tushish chegarasi, glide - qo'nish nishabi, gate - qo'nish yo'lagi oldidagi masofa (m), accel/decel - tezlanish (m/s2),
+    // brake - qo'ngandan keyingi tormoz, vr - uchish tezligi (kruiz tezligining ulushi), rotate - burun ko'tarilishi (rad), lookT - oldinga qarash (s)
+    fly: { bank: 0.42, climb: 0.085, dsc: 0.07, sink: 0.095, glide: 0.065, gate: 1100, accel: 2.6, decel: 3.0, brake: 4.2, vr: 0.62, rotate: 0.13, lookT: 4.5, outT: 12, flareH: 8, wait: [8, 16] } },
   heli:  { label: 'Vertolyot', minAlt: 12, maxAlt: 200, defAlt: 40, speed: 16, clearance: 10, margin: 7,  maxBank: 0.25, color: 0x35d0ff, spin: 25, padR: 45,  padSlow: 0.35, range0: 120, rangeStep: 80,
-    atk: { speed: 34, accel: 10, turn: 1.7, climb: 10, sink: 13, look: 140, minDist: 0, standoff: 150, fireRange: 540, cone: 0.16, cooldown: 2.6, salvo: 2, breakTime: 0 } },
+    atk: { speed: 34, accel: 10, turn: 1.7, climb: 10, sink: 13, look: 140, minDist: 0, standoff: 150, fireRange: 540, cone: 0.16, cooldown: 2.6, salvo: 2, breakTime: 0 },
+    fly: { yaw: 0.8, climb: 0.25, dsc: 0.22, accel: 2.6, liftH: 10, landR: 120, wait: [8, 16] } },
 };
+export const AIR_RUNWAY_MAX_PTS = 8;
 export const AIR_MAX_POINTS = 120;   // uzun yo'llarda to'siqni chetlab o'tish uchun ko'proq nuqta kerak (oldin 60)
 export const AIR_MAX_PATHS = Infinity;   // yo'llar soni cheksiz (botlar soni o'yinda AIR_BOT_LIMIT bilan cheklanadi)
 export const AIR_MAX_BOTS = 6;
@@ -77,7 +90,19 @@ export function normalizeAirPath(p) {
   }
   if (pts.length > 1 && Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) < 1.5) pts.pop();
   if (pad && (!pts.length || Math.hypot(pts[0][0] - pad[0], pts[0][1] - pad[1]) > 1.5)) pad = null;   // 1-nuqta padda bo'lmasa, pad yaroqsiz
+  // Uchish yo'lagi (faqat samolyot): boshi = joy (pad)
+  let runway = null;
+  if (type === 'plane' && p && Array.isArray(p.runway)) { const rwb = buildRunway(p.runway); if (rwb) runway = rwb.pts; }
+  if (runway) {
+    pad = [runway[0][0], runway[0][1]];
+    if (!pts.length || Math.hypot(pts[0][0] - pad[0], pts[0][1] - pad[1]) > 1.5) {
+      if (post) pts.length = 0;
+      pts.unshift([pad[0], pad[1], post ? 0.2 : 0.5]);
+      if (pts.length > AIR_MAX_POINTS) pts.length = AIR_MAX_POINTS;
+    }
+  }
   const out = { type, count: clamp(Math.round(Number(p && p.count) || 1), 1, AIR_MAX_BOTS), pts };
+  if (runway) out.runway = runway.map((q) => q.slice());
   if (p && typeof p.model === 'string' && p.model.trim()) out.model = p.model.trim().slice(0, 80);
   if (pad) out.pad = pad;
   if (p && p.combat) out.combat = true;   // jangovor bot
@@ -202,7 +227,7 @@ function scanPath(pts, obs, T, pad) {
       if (pad) {   // pad yaqinida zaxira asta-sekin kamayadi: samolyot/vertolyot yerga qo'na oladi
         const t = clamp(Math.hypot(p.x - pad[0], p.z - pad[1]) / T.padR, 0, 1);
         margin = 2 + (T.margin - 2) * t;
-        clr = 0.5 + (T.clearance - 0.5) * t;
+        clr = 0.1 + (T.clearance - 0.1) * t * t;   // pad yonida zaxira deyarli yo'q (egri chiziq yer tomon biroz pastga og'ishi mumkin)
       }
       const need = floorAt(obs, p.x, p.z, margin) + clr;
       if (p.y < need - 0.05) {
@@ -280,6 +305,116 @@ function sampleBaked(b, s, out) {
 }
 
 const wrapAngle = (a) => { while (a > Math.PI) a -= Math.PI * 2; while (a < -Math.PI) a += Math.PI * 2; return a; };
+
+// ---------- Uchish yo'lagi (runway) ----------
+// raw: [[x, z], ...] -> { pts, seg: [uzunliklar], len, h0 (1-bo'lak yo'nalishi) } yoki null
+export function buildRunway(raw) {
+  if (!Array.isArray(raw)) return null;
+  const pts = [];
+  for (const q of raw) {
+    if (!Array.isArray(q)) continue;
+    const x = Number(q[0]), z = Number(q[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) continue;
+    const last = pts[pts.length - 1];
+    if (last && Math.hypot(x - last[0], z - last[1]) < 1) continue;
+    pts.push([r1(x), r1(z)]);
+    if (pts.length >= AIR_RUNWAY_MAX_PTS) break;
+  }
+  if (pts.length < 2) return null;
+  const seg = [];
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    seg.push(l); len += l;
+  }
+  return { pts, seg, len, h0: Math.atan2(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]) };
+}
+// Yo'lakning boshidan d metr narida: { x, z, h }. Chiziqdan oldin va keyin to'g'ri chiziq davom etadi.
+function runwayAt(rw, d, out) {
+  const P = rw.pts, n = P.length;
+  if (d <= 0) {
+    out.x = P[0][0] + Math.sin(rw.h0) * d; out.z = P[0][1] + Math.cos(rw.h0) * d; out.h = rw.h0;
+    return out;
+  }
+  let acc = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const l = rw.seg[i];
+    if (d <= acc + l || i === n - 2) {
+      const h = Math.atan2(P[i + 1][0] - P[i][0], P[i + 1][1] - P[i][1]);
+      const t = d - acc;
+      out.x = P[i][0] + Math.sin(h) * t; out.z = P[i][1] + Math.cos(h) * t; out.h = h;
+      return out;
+    }
+    acc += l;
+  }
+  return out;
+}
+// (x, z) nuqta yo'lakning 1-bo'lagi bo'yicha boshidan necha metrda (manfiy = boshidan oldinda)
+const rwProject = (rw, x, z) => (x - rw.pts[0][0]) * Math.sin(rw.h0) + (z - rw.pts[0][1]) * Math.cos(rw.h0);
+
+// ---------- Oddiy botlar: tayyor yo'l profili ----------
+// Foydalanuvchi chizgan balandliklar (b.ys) va to'siqlar (need) asosida REAL profil yasaydi:
+//  - uchish joyi (pad) yaqinida yer ustida, undan uzoqlashgan sari faqat sekin ko'tariladi (F.climb nishab);
+//  - joyga qaytishda faqat sekin tushadi (F.dsc nishab);
+//  - to'siq ustidan o'tish uchun kerak bo'lsa, ko'tarilish OLDINDAN boshlanadi (keskin sakrash bo'lmaydi).
+// Qaytaradi: Float32Array (N ta balandlik). usePad = false bo'lsa, pad hisobga olinmaydi (kruiz balandlikda uchib o'tadi).
+function makeProfile(b, path, obs, T, lead, usePad) {
+  const N = b.N, ds = b.step, F = T.fly;
+  const pad = usePad ? path.pad : null;
+  const g0 = pad ? groundAt(obs, pad[0], pad[1]) : 0;
+  const alt = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = b.xs[i], z = b.zs[i];
+    let margin = T.margin, clr = T.clearance;
+    if (pad) {
+      const t = clamp(Math.hypot(x - pad[0], z - pad[1]) / T.padR, 0, 1);
+      margin = 2 + (T.margin - 2) * t;
+      clr = 0.5 + (T.clearance - 0.5) * t;
+    }
+    const need = floorAt(obs, x, z, margin) + clr;
+    let a = b.ys[i];
+    if (pad) a = Math.min(a, g0 + 0.5 + F.climb * 0.9 * Math.max(0, i * ds - lead), g0 + 0.5 + F.dsc * 0.9 * (N - i) * ds);
+    alt[i] = Math.max(a, need);
+  }
+  const locked = (i) => !!pad && (i * ds <= lead + 15 || (N - i) * ds <= 15);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let t = 2 * N - 1; t >= 1; t--) {         // ko'tarilish nishabi: oldingi nuqtalarni ko'taramiz
+      const k = t % N, j = (t - 1) % N;
+      if (locked(j)) continue;
+      const m = alt[k] - F.climb * ds;
+      if (m > alt[j]) alt[j] = m;
+    }
+    for (let t = 1; t < 2 * N; t++) {              // tushish nishabi: keyingi nuqtalarni ko'taramiz
+      const k = t % N, j = (t - 1) % N;
+      if (locked(k)) continue;
+      const m = alt[j] - F.dsc * ds;
+      if (m > alt[k]) alt[k] = m;
+    }
+  }
+  return alt;
+}
+
+// Yo'l bo'ylab "yoy" koordinatasi: yangi qiymatga o'tadi, lekin bir freymda maxs dan ko'p oldinga, 40 m dan ko'p orqaga siljimaydi
+function advanceS(s0, s1, len, maxFwd) {
+  let d = ((s1 - s0 + len * 1.5) % len) - len * 0.5;
+  d = clamp(d, -40, maxFwd);
+  return (((s0 + d) % len) + len) % len;
+}
+
+// Yo'ldagi eng yaqin nuqta: oyna [s0 - back, s0 + fwd] ichida qidiriladi. { s, d }
+function nearestS(b, x, z, s0, back, fwd) {
+  const N = b.N, ds = b.step;
+  const i0 = Math.floor(s0 / ds) - Math.ceil(back / ds);
+  const n = Math.min(N, Math.ceil((back + fwd) / ds));
+  let best = 0, bd = Infinity;
+  for (let k = 0; k <= n; k++) {
+    const i = (((i0 + k) % N) + N) % N;
+    const dx = b.xs[i] - x, dz = b.zs[i] - z;
+    const d = dx * dx + dz * dz;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return { s: best * ds, d: Math.sqrt(bd) };
+}
 
 // ---------- Jangovor botlar uchun joy topish ----------
 // Belgilangan nuqta band bo'lsa (uy, daraxt, tog', boshqa bot) - eng yaqin BO'SH joyni o'zi topadi.
@@ -360,6 +495,7 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
   const paths = [];
   const parkUsed = [];   // jangovor botlar turgan joylar (bir-biriga yaqin qo'ymaslik uchun)
   const P0 = { x: 0, y: 0, z: 0 }, P1 = { x: 0, y: 0, z: 0 }, P2 = { x: 0, y: 0, z: 0 };
+  const tmpRw = { x: 0, z: 0, h: 0 };
   const far2 = AIR_VIEW_DIST * AIR_VIEW_DIST;
   const zb = bounds ? { x0: -bounds.w, x1: bounds.e, z0: -bounds.n, z1: bounds.s } : null;
 
@@ -388,6 +524,13 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     };
   }
 
+  // Yo'l boshidagi/oxiridagi yo'nalish (bakePath bo'yicha)
+  const A1 = { x: 0, y: 0, z: 0 }, A2 = { x: 0, y: 0, z: 0 };
+  function headingAt(b, s) {
+    sampleBaked(b, s, A1); sampleBaked(b, s + 8, A2);
+    return Math.atan2(A2.x - A1.x, A2.z - A1.z);
+  }
+
   function addPath(raw) {
     const path = normalizeAirPath(raw);
     if (path.combat) return addCombat(path);
@@ -398,36 +541,83 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     const checked = checkAirPath(path, obstacles, true);   // xavfli joylar avtomatik ko'tariladi
     path.pts = checked.pts;
     const baked = bakePath(path);
+    const hasPad = !!path.pad;
+    let rw = null;
+    if (hasPad && path.type === 'plane') {
+      rw = buildRunway(path.runway);
+      if (!rw) {   // eski yo'llar: yo'lak chizilmagan - yo'lning boshlanish yo'nalishida 90 m yugurish yo'lagi o'ylab topiladi
+        const hh = headingAt(baked, 0);
+        rw = buildRunway([[path.pad[0], path.pad[1]], [path.pad[0] + Math.sin(hh) * 90, path.pad[1] + Math.cos(hh) * 90]]);
+      }
+    }
+    // Real profil: pad bor bo'lsa - yerdan sekin ko'tariladi va sekin tushadi. Qo'shimcha botlar (2-, 3-...) esa padga qo'nmaydi:
+    // ular pad ustidan ham kruiz balandlikda uchib o'tadi (bir joyga ikkita bot qo'nib qolmasin).
+    const count = Math.max(0, Math.min(path.count, maxBots - bots.length));
+    const ysFree = hasPad && count > 1 ? makeProfile(baked, path, obstacles, T, 0, false) : null;
+    baked.ys = makeProfile(baked, path, obstacles, T, rw ? rw.len : 0, hasPad);
     paths.push(path);
 
-    const count = Math.max(0, Math.min(path.count, maxBots - bots.length));
+    const cruise = path.speed || T.speed;
     const base = Math.random() * baked.len;
     for (let k = 0; k < count; k++) {
       const model = makeModel(path.type, path.model, false);
       const group = makeGroup(model);
-      bots.push({
-        T, baked, group, root: model.root, spin: model.spin || [],
-        s: base + (baked.len * k) / path.count,
-        speed: path.speed || T.speed,
-        bank: 0,
-        kind: path.type, voice: null, curSpeed: 0, dx: 1e9, dy: 0, dz: 0, vx: 0, vz: 0,
-        dents: [], crashCd: 0, hurtUntil: 0,
-        combat: false, mount: null, rk: [], mode: 'patrol',
-        offX: 0, offY: 0, offZ: 0, hOff: 0, offK: false,
-      });
+      const cycle = hasPad && k === 0;
+      const bk = hasPad && k > 0 ? Object.assign({}, baked, { ys: ysFree }) : baked;
+      bots.push(makePatrolBot({ T, path, baked: bk, model, group, cycle, k, count, cruise, base, rw }));
     }
     return { ok: checked.ok, raised: checked.raised, tooHigh: checked.tooHigh, bots: count };
   }
 
+  function makePatrolBot({ T, path, baked, model, group, cycle, k, count, cruise, base, rw }) {
+    const bot = {
+      T, group, root: model.root, spin: model.spin || [], baked,
+      kind: path.type, voice: null, curSpeed: 0, dx: 1e9, dy: 0, dz: 0, vx: 0, vz: 0,
+      dents: [], crashCd: 0, hurtUntil: 0,
+      combat: false, mount: null, rk: [], mode: 'patrol',
+      cruise, cycle, rw, phase: 'fly', s: 0, passedMid: false, waitUntil: 0, rd: 0, gOff: 0,
+      px: 0, py: 0, pz: 0, hdg: 0, spd: 0, vy: 0, pitch: 0, bank: 0, hdgRate: 0, hvx: 0, hvz: 0,
+      spinK: 0, planAt: 0, needAlt: 0, clr: T.clearance, outUntil: 0, outH: 0, gateAlt: 0, landT: 0, liftT: 0,
+      home: null,
+    };
+    if (cycle) {   // pad bor: yerda turadi, keyin uchadi, aylanib kelib qo'nadi, to'xtaydi va yana uchadi
+      const g = groundAt(obstacles, path.pad[0], path.pad[1]);
+      const h = rw ? rw.h0 : headingAt(baked, 0);
+      bot.home = { x: path.pad[0], z: path.pad[1], y: g + 0.05, h };
+      bot.px = path.pad[0]; bot.pz = path.pad[1]; bot.py = g + 0.05; bot.hdg = h;
+      bot.phase = 'wait'; bot.mode = 'parked';
+      bot.waitUntil = clock + 1.5 + Math.random() * 5;
+    } else {       // yo'l bo'ylab doimiy uchadi
+      bot.s = (((base + (baked.len * k) / count) % baked.len) + baked.len) % baked.len;
+      sampleBaked(baked, bot.s, A1);
+      bot.px = A1.x; bot.py = A1.y; bot.pz = A1.z;
+      bot.hdg = headingAt(baked, bot.s);
+      bot.spd = cruise;
+      bot.vx = Math.sin(bot.hdg) * cruise; bot.vz = Math.cos(bot.hdg) * cruise;
+      bot.hvx = bot.vx; bot.hvz = bot.vz;
+      bot.curSpeed = cruise;
+    }
+    return bot;
+  }
+
   // Jangovor yozuv: yo'l kerak emas, faqat joy. Bot AI shu atrofdan bo'sh joy topib, jim turadi.
+  // Uchish yo'lagi (runway) chizilgan bo'lsa (samolyot) - bot aynan shu chiziqning boshida turadi va shu chiziq bo'ylab uchadi.
   function addCombat(path) {
     const home0 = path.pad ? path.pad : (path.pts.length ? [path.pts[0][0], path.pts[0][1]] : null);
     if (!home0) return { ok: false, tooShort: true, bots: 0 };
     paths.push(path);
     const T = AIR_TYPES[path.type];
+    const rwb = path.type === 'plane' ? buildRunway(path.runway) : null;
     const count = Math.max(0, Math.min(path.count, maxBots - bots.length));
     for (let k = 0; k < count; k++) {
-      const spot = findParkSpot(obstacles, home0[0], home0[1], path.type, parkUsed, zb);
+      let spot, rd = 0;
+      if (rwb) {   // 2-, 3-... botlar yo'lakning boshi orqasida ketma-ket turadi
+        rd = -k * 55;
+        runwayAt(rwb, rd, tmpRw);
+        spot = { x: r1(tmpRw.x), z: r1(tmpRw.z), y: groundAt(obstacles, tmpRw.x, tmpRw.z), h: rwb.h0 };
+      } else {
+        spot = findParkSpot(obstacles, home0[0], home0[1], path.type, parkUsed, zb);
+      }
       parkUsed.push({ x: spot.x, z: spot.z });
       const model = makeModel(path.type, path.model, true);
       const group = makeGroup(model);
@@ -448,6 +638,7 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
         breakUntil: 0, breakH: 0, extendUntil: 0, extendDist: 0, lat: ps.lat, altOff: 0, flipAt: 0, startAt: 0, retAt: 0,
         seeAt: 0, seenAt: 0, sx: 0, sy: 0, sz: 0, svx: 0, svy: 0, svz: 0,
         evadeAt: 0, evadeUntil: 0, evadeH: 0, evadeVy: 0,
+        rw: rwb, rd, outUntil: 0, outH: 0,
       });
     }
     return { ok: true, raised: 0, tooHigh: false, bots: count, combat: true };
@@ -467,7 +658,7 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     const near = [];
     if (!silent) {
       for (const bot of bots) {
-        if (bot.combat && bot.mode === 'parked') continue;
+        if (bot.mode === 'parked') continue;
         const d = Math.hypot(bot.dx, bot.dy, bot.dz);
         if (d < (hearRange[bot.kind] || 300)) near.push({ bot, d });
       }
@@ -539,7 +730,7 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     bot.seeAt = 0; bot.lat = ps.lat; bot.flipAt = 0;
     bot.fireAt = clock + 1.2 + Math.random() * 1.5;   // "reaksiya vaqti"
     if (bot.grounded) {
-      if (bot.sub === 'rollout') { bot.sub = 'takeoff'; return; }   // qo'nib borayotgan edi: to'xtamasdan qayta uchadi
+      if (bot.sub === 'rollout') { bot.sub = 'takeoff'; if (bot.rw) bot.rd = rwProject(bot.rw, bot.px, bot.pz); return; }   // qo'nib borayotgan edi: to'xtamasdan qayta uchadi
       bot.sub = 'startup';
       // dvigatel/parrak yurishishi: har bot har xil vaqtda uchadi (hammasi bir vaqtda ko'tarilmasin)
       bot.startAt = clock + (wasParked ? (bot.kind === 'heli' ? 2.4 : 1.6) + ps.react * 1.2 + Math.random() * 1.2 : 0.3);
@@ -666,11 +857,14 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     const g = groundAt(obstacles, bot.px, bot.pz);
     if (bot.sub === 'startup') {
       bot.py = g + 0.05;
-      if (clock >= bot.startAt) bot.sub = 'takeoff';
+      if (clock >= bot.startAt) {
+        bot.sub = 'takeoff';
+        if (bot.rw) bot.rd = rwProject(bot.rw, bot.px, bot.pz);   // yo'lakning qaysi joyida turgan bo'lsa, o'sha joydan yuguradi
+      }
       return;
     }
     if (bot.sub === 'rollout') {   // qo'ngandan keyin sekin to'xtaydi
-      bot.spd = Math.max(0, bot.spd - 16 * dt);
+      bot.spd = Math.max(0, bot.spd - (plane ? 6 : 16) * dt);   // samolyot sekin to'xtaydi
       bot.px += Math.sin(bot.hdg) * bot.spd * dt;
       bot.pz += Math.cos(bot.hdg) * bot.spd * dt;
       bot.py = groundAt(obstacles, bot.px, bot.pz) + 0.05;
@@ -681,6 +875,25 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
       return;
     }
     // takeoff
+    if (plane && bot.rw) {   // UCHISH YO'LAGI: chiziq bo'ylab yuguradi, chiziq tugaganda sekin havoga ko'tariladi
+      const rw = bot.rw, vr = A.speed * 0.5;
+      const left = Math.max(12, rw.len - bot.rd);
+      bot.spd += clamp((vr * vr - bot.spd * bot.spd) / (2 * left), 1.5, A.accel * 0.9) * dt;   // tezlik aynan chiziq oxirida yetadigan qilib tezlanadi
+      bot.spd = Math.min(bot.spd, vr * 1.3);
+      bot.rd += bot.spd * dt;
+      runwayAt(rw, bot.rd, tmpRw);
+      bot.px = tmpRw.x; bot.pz = tmpRw.z;
+      bot.hdg += wrapAngle(tmpRw.h - bot.hdg) * Math.min(1, dt * 3);
+      bot.py = groundAt(obstacles, bot.px, bot.pz) + 0.05;
+      bot.vx = Math.sin(bot.hdg) * bot.spd; bot.vz = Math.cos(bot.hdg) * bot.spd;
+      const rot = bot.rd >= rw.len - 8 && bot.spd >= vr * 0.9;   // chiziq oxiriga yaqinlashganda burnini sekin ko'taradi
+      bot.pitch += ((rot ? -0.13 : 0) - bot.pitch) * Math.min(1, dt * 1.6);
+      if (bot.rd >= rw.len && bot.spd >= vr) {
+        bot.vy = 0.6; bot.outH = bot.hdg; bot.outUntil = clock + 11;   // havoga sekin ko'tariladi va o'z yo'nalishida to'g'ri uchadi
+        liftOff(bot);
+      }
+      return;
+    }
     if (plane) {   // yerda tezlanadi, tezlik yetgach burnini ko'taradi va uzilib chiqadi
       const vr = A.speed * 0.5;
       bot.spd += A.accel * 0.55 * dt;
@@ -725,6 +938,9 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     let lx = tx, ly = ty, lz = tz;
     let landing = false, dH = 0;
     const evading = bot.mode === 'attack' && clock >= bot.evadeAt && clock < bot.evadeUntil;
+    const gNow = groundAt(obstacles, bot.px, bot.pz);
+    // yo'lakdan ko'tarilgandan keyin: biroz vaqt o'z yo'nalishida, sekin ko'tarilib uchadi
+    const climbOut = plane && bot.mode === 'attack' && clock < bot.outUntil && bot.py - gNow < 70;
 
     if (bot.mode === 'attack') {
       // Oldindan nishon: raketa yetib borguncha o'yinchi qayerga uchib borishini hisoblaydi
@@ -778,6 +994,7 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
         hv = { h: Math.atan2(vdx, vdz), m: vm };
         yawT = hd > A.fireRange * 1.2 ? hv.h : Math.atan2(dx, dz);              // burni nishonga qaraydi
       }
+      if (climbOut) { desH = bot.outH; desAlt = Math.max(desAlt, bot.py + 20); }   // yo'lakdan chiqqach to'g'ri va sekin ko'tariladi
       if (clock - bot.blockedAt < 1.5) desAlt += 45;                            // yo'lda tog'/bino bor edi: balandroq ko'tariladi
       if (evading) {                                                            // raketadan qochish
         const eh = edgeSteer(bot, bot.evadeH);
@@ -792,16 +1009,16 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
       dH = Math.hypot(hx - bot.px, hz - bot.pz);
       let ax = hx, az = hz;
       if (plane && !bot.final) {
-        const fx = hx - Math.sin(bot.home.h) * 230, fz = hz - Math.cos(bot.home.h) * 230;
-        if (Math.hypot(fx - bot.px, fz - bot.pz) < 90 || dH < 250) bot.final = true;
+        const fx = hx - Math.sin(bot.home.h) * 420, fz = hz - Math.cos(bot.home.h) * 420;   // uzun, yumshoq qo'nish yo'li
+        if (Math.hypot(fx - bot.px, fz - bot.pz) < 110 || dH < 450) bot.final = true;
         else { ax = fx; az = fz; }
       }
       const adx = ax - bot.px, adz = az - bot.pz;
       desH = Math.atan2(adx, adz);
       if (plane) {
-        landing = dH < 380;
-        desAlt = landing ? bot.home.y + clamp(dH * 0.17, 0, 80) : Math.max(T.minAlt + 10, T.defAlt * 0.8);
-        spdT = clamp(dH * 0.2, 14, A.speed * 0.9);
+        landing = dH < 560;
+        desAlt = landing ? bot.home.y + clamp(dH * 0.085, 0, 80) : Math.max(T.minAlt + 10, T.defAlt * 0.8);   // ~5° nishab: burun bilan "sho'ng'imaydi"
+        spdT = clamp(dH * 0.12 + 17, 18, A.speed * 0.9);
       } else {
         landing = dH < 160;
         desAlt = landing ? bot.home.y + clamp((dH - 8) * 0.4, 0, 60) : Math.max(T.minAlt + 8, T.defAlt);
@@ -853,10 +1070,11 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
 
     // balandlik
     const gHere = groundAt(obstacles, bot.px, bot.pz);
-    let vyT = clamp((bot.planAlt - bot.py) * 1.2, -A.sink, A.climb);
+    const climbCap = climbOut ? Math.max(3, bot.spd * 0.11) : A.climb;
+    let vyT = clamp((bot.planAlt - bot.py) * 1.2, -A.sink, climbCap);
     if (plane && vyT > 0) vyT *= clamp((bot.spd - A.speed * 0.35) / (A.speed * 0.2), 0.1, 1);   // tezlik kam bo'lsa ko'tarila olmaydi
-    if (landing) vyT = Math.max(vyT, -(1.2 + (bot.py - gHere) * 0.35));                          // yerga yaqinlashganda sekin tushadi
-    const dv = A.climb * 1.5 * dt;
+    if (landing) vyT = Math.max(vyT, plane ? -(0.5 + (bot.py - gHere) * 0.14) : -(1.2 + (bot.py - gHere) * 0.35));   // yerga yaqinlashganda sekin tushadi
+    const dv = (climbOut ? 1.4 : A.climb * 1.5) * dt;
     bot.vy += clamp(vyT - bot.vy, -dv, dv);
     bot.py += bot.vy * dt;
 
@@ -864,14 +1082,14 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     if (zb) { bot.px = clamp(bot.px, zb.x0 + 3, zb.x1 - 3); bot.pz = clamp(bot.pz, zb.z0 + 3, zb.z1 - 3); }
 
     // oxirgi himoya: hech qachon to'siq/yer ichiga kirmaydi (past balandlikdan boshlasa, zaxira asta-sekin kattalashadi)
-    bot.clr = landing ? clamp(0.05 + dH * 0.12, 0.05, T.clearance) : Math.min(T.clearance, bot.clr + dt * 3);
+    bot.clr = landing ? clamp(0.05 + dH * (plane ? 0.05 : 0.12), 0.05, T.clearance) : Math.min(T.clearance, bot.clr + dt * 3);
     const minY = floorAt(obstacles, bot.px, bot.pz, landing ? 1 : 2) + bot.clr;
     if (bot.py < minY) { bot.py = minY; if (bot.vy < 0) bot.vy = 0; }
 
     // qo'nish
     if (bot.mode === 'return' && landing) {
       const gh = groundAt(obstacles, bot.px, bot.pz);
-      if (plane && dH < 40 && bot.py - gh <= bot.clr + 0.3 && bot.py - gh < 2.5) {
+      if (plane && dH < 60 && bot.py - gh <= bot.clr + 0.4 && bot.py - gh < 1.2) {
         bot.grounded = true; bot.sub = 'rollout'; bot.vy = 0; bot.py = gh + 0.05;
         return;
       }
@@ -886,8 +1104,9 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
 
     // ko'rinish: burun, yonboshlash
     if (plane) {
-      const pT = -Math.atan2(bot.vy, Math.max(bot.spd, 10));
-      bot.pitch += (pT - bot.pitch) * Math.min(1, dt * 4);
+      let pT = clamp(-Math.atan2(bot.vy, Math.max(bot.spd, 10)), -0.6, 0.1);   // burun tushishi 6° dan oshmaydi
+      if (landing && bot.py - gHere < 14) pT = Math.min(pT, -0.05);              // qo'nish oldidan burun biroz ko'tariladi (flare)
+      bot.pitch += (pT - bot.pitch) * Math.min(1, dt * 3);
       const bankT = -clamp(Math.atan((bot.spd * bot.hdgRate) / 9.81), -T.maxBank * 1.3, T.maxBank * 1.3);
       bot.bank += (bankT - bot.bank) * Math.min(1, dt * 2.5);
     } else {
@@ -942,6 +1161,328 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
     if (!bot.grounded) { bot.px += nx * 1.5; bot.pz += nz * 1.5; }
   }
 
+  // ---------- ODDIY BOTLAR (jangovor emas): odamdek uchadi ----------
+  // Yo'l faqat yo'nalish beradi. Bot "pilot" kabi: oldinga qarab (pure pursuit) buriladi, burilish tezligi yonboshlash burchagi bilan
+  // cheklangan (katta samolyot keskin burilmaydi), balandlikni sekin o'zgartiradi, oldidagi to'siq (uy, tog') ustidan ko'tarilib o'tadi.
+  // Pad bor bo'lsa: wait (turadi) -> roll (yuguradi) -> fly (uchadi) -> gate -> final (qo'nish yo'liga chiqadi) -> rollout (sekin to'xtaydi) -> wait.
+  // Vertolyot: wait -> lift (tik ko'tariladi) -> fly -> land (padga yaqinlashib tik tushadi) -> wait.
+  const G = 9.81;
+  const waitTime = (F) => F.wait[0] + Math.random() * (F.wait[1] - F.wait[0]);
+
+  // Oldindagi to'siqlar uchun kerakli minimal balandlik (padning yonida zaxira kamayadi: qo'nish/uchish mumkin bo'lsin)
+  function aheadNeed(bot, h, dist) {
+    const T = bot.T, hx = Math.sin(h), hz = Math.cos(h), pad = bot.home;
+    let need = 0;
+    for (let k = 1; k <= 5; k++) {
+      const d = (dist * k) / 5;
+      const x = bot.px + hx * d, z = bot.pz + hz * d;
+      let margin = T.margin, clr = T.clearance;
+      if (pad) {
+        const t = clamp(Math.hypot(x - pad.x, z - pad.z) / T.padR, 0, 1);
+        margin = 2 + (T.margin - 2) * t;
+        clr = 0.5 + (T.clearance - 0.5) * t;
+      }
+      const n = floorAt(obstacles, x, z, margin) + clr;
+      if (n > need) need = n;
+    }
+    return need;
+  }
+
+  // Samolyot yerda: yo'lak bo'ylab yuguradi (roll) yoki qo'ngandan keyin sekin to'xtaydi (rollout)
+  function planeGround(bot, dt, vr) {
+    const T = bot.T, F = T.fly, rw = bot.rw;
+    if (bot.phase === 'roll') {
+      const left = Math.max(12, rw.len - bot.rd);   // tezlik aynan yo'lak oxirida yetadigan qilib tezlanadi
+      bot.spd += clamp((vr * vr - bot.spd * bot.spd) / (2 * left), 1.6, 7) * dt;
+      bot.spd = Math.min(bot.spd, vr * 1.25);
+    } else {
+      bot.spd = Math.max(0, bot.spd - (bot.spd > 12 ? F.brake * 0.55 : F.brake) * dt);   // avval yengil, keyin kuchliroq tormoz
+    }
+    bot.rd += bot.spd * dt;
+    runwayAt(rw, bot.rd, tmpRw);
+    bot.gOff *= Math.exp(-dt * 0.7);   // qo'nganda yo'lakdan chetroqqa tushgan bo'lsa, asta-sekin chiziqqa o'tadi
+    bot.px = tmpRw.x + Math.cos(tmpRw.h) * bot.gOff;
+    bot.pz = tmpRw.z - Math.sin(tmpRw.h) * bot.gOff;
+    bot.hdg = wrapAngle(bot.hdg + wrapAngle(tmpRw.h - bot.hdg) * Math.min(1, dt * 3));
+    bot.py = groundAt(obstacles, bot.px, bot.pz) + 0.05;
+    bot.vy = 0; bot.hdgRate = 0;
+    bot.vx = Math.sin(bot.hdg) * bot.spd; bot.vz = Math.cos(bot.hdg) * bot.spd;
+    bot.bank += (0 - bot.bank) * Math.min(1, dt * 3);
+    if (bot.phase === 'roll') {
+      // yo'lak oxiriga yaqinlashganda burnini SEKIN ko'taradi; chiziq tugaganda va tezlik yetganda havoga ko'tariladi
+      const rot = bot.rd >= rw.len - 10 && bot.spd >= vr * 0.92;
+      bot.pitch += ((rot ? -F.rotate : 0) - bot.pitch) * Math.min(1, dt * 1.6);
+      if (bot.rd >= rw.len && bot.spd >= vr) {
+        bot.phase = 'fly';
+        bot.vy = 0.5;
+        bot.outH = bot.hdg; bot.outUntil = clock + F.outT;   // biroz vaqt o'z yo'nalishida to'g'ri uchadi
+        bot.liftT = clock;
+        bot.s = nearestS(bot.baked, bot.px, bot.pz, 0, 0, Math.min(bot.baked.len, 900)).s;
+        bot.passedMid = false;
+        bot.clr = clamp(bot.py - floorAt(obstacles, bot.px, bot.pz, 2), 0.3, T.clearance);
+        bot.planAt = 0;
+      }
+    } else {
+      bot.pitch += ((bot.spd > 6 ? -0.03 : 0) - bot.pitch) * Math.min(1, dt * 1.5);
+      if (bot.spd < 0.35) {
+        bot.spd = 0; bot.vx = 0; bot.vz = 0;
+        bot.phase = 'wait'; bot.waitUntil = clock + waitTime(F);
+      }
+    }
+  }
+
+  // Samolyot havoda: yo'l bo'ylab (fly) yoki qo'nish yo'lagiga (gate, final)
+  function planeFly(bot, dt, vr) {
+    const T = bot.T, F = T.fly, b = bot.baked, rw = bot.rw;
+    const gH = groundAt(obstacles, bot.px, bot.pz);
+    const landing = bot.phase === 'gate' || bot.phase === 'final';
+    let desH = bot.hdg, altT = bot.py, along = 0, cross = 0, dLand = 0;
+
+    if (!landing) {
+      // uchish-qo'nish sikli bor botda yo'l boshiga qaytib o'tib ketmaydi (aylanma izlash yo'q), faqat oldinga siljiydi
+      let n = nearestS(b, bot.px, bot.pz, bot.s, bot.cycle ? Math.min(60, bot.s) : 60, bot.cycle ? Math.min(280, Math.max(40, b.len - bot.s)) : 280);
+      if (n.d > 900) { n = nearestS(b, bot.px, bot.pz, 0, 0, b.len); bot.s = n.s; }   // yo'ldan juda uzoqlashib ketgan bo'lsa, qayta topadi
+      else bot.s = advanceS(bot.s, n.s, b.len, Math.max(bot.spd, 8) * dt * 2.2);   // yo'l bo'ylab faqat sekin siljiydi (burchakni kesib o'tib ketmaydi)
+      if (bot.s > b.len * 0.5) bot.passedMid = true;
+      const Ld = clamp(bot.spd * F.lookT, 90, 300);
+      sampleBaked(b, bot.s + Ld, A1);
+      desH = Math.atan2(A1.x - bot.px, A1.z - bot.pz);
+      sampleBaked(b, bot.s + clamp(bot.spd * 3, 60, 220), A2);
+      altT = A2.y;
+      if (clock >= bot.planAt) {   // oldindagi to'siqlarni tekshirish (har 0.2 s)
+        bot.planAt = clock + 0.2 + Math.random() * 0.06;
+        bot.needAlt = aheadNeed(bot, bot.hdg, Math.max(260, bot.spd * 7));
+      }
+      altT = Math.max(altT, bot.needAlt);
+      if (clock < bot.outUntil && bot.py - gH < 60) desH = bot.outH;   // yo'lakdan ko'tarilgach o'z yo'nalishida to'g'ri uchadi
+      if (bot.cycle && bot.passedMid && clock - bot.liftT > b.len / (bot.cruise * 1.6) && bot.s >= b.len - clamp(b.len * 0.42, 600, F.gate + 500)) {   // qo'nish vaqti
+        bot.phase = 'gate'; bot.gateAlt = Math.max(60, bot.py - bot.home.y); bot.landT = clock;
+      }
+    }
+    if (bot.phase === 'gate' || bot.phase === 'final') {
+      const O = rw.pts[0], ux = Math.sin(rw.h0), uz = Math.cos(rw.h0);
+      const dx = bot.px - O[0], dz = bot.pz - O[1];
+      along = dx * ux + dz * uz;        // yo'lak boshidan oldinga masofa (manfiy = yo'lak oldida)
+      cross = dx * uz - dz * ux;        // o'ng tomonga og'ish
+      dLand = Math.hypot(dx, dz);
+      const gy0 = bot.home.y, Td = Math.min(25, rw.len * 0.4);
+      if (bot.phase === 'gate') {       // yo'lak oldidagi "darvoza" nuqtasiga uchib boradi (tekis, uzun qo'nish yo'li)
+        const gx = O[0] - ux * (F.gate + 700), gz = O[1] - uz * (F.gate + 700);   // uzoqroq nuqta: burilib olishga joy bor
+        const dG = Math.hypot(gx - bot.px, gz - bot.pz);
+        desH = Math.atan2(gx - bot.px, gz - bot.pz);
+        altT = gy0 + clamp(F.glide * dLand, 60, bot.gateAlt);
+        const aligned = Math.abs(wrapAngle(rw.h0 - bot.hdg)) < 0.6 && Math.abs(cross) < 160 && along < -250
+          && bot.py - gy0 < F.glide * (Td - along) + 25;
+        if (aligned || dG < 260) bot.phase = 'final';
+      } else {                          // final: o'rta chiziqqa ergashib, ~3.7° nishab bilan tushadi
+        desH = rw.h0 - clamp(cross * 0.02, -0.7, 0.7);
+        altT = Math.min(gy0 + Math.max(0, F.glide * (Td - along)), gy0 + bot.gateAlt + 10);
+        if (along > Td + 200) { bot.phase = 'gate'; bot.gateAlt = Math.max(60, bot.py - gy0); }   // o'tib ketdi: qayta aylanib keladi
+      }
+      if (clock - bot.landT > 360) {    // juda cho'zilib ketsa: joyiga qo'yiladi
+        bot.px = O[0]; bot.pz = O[1]; bot.py = gy0; bot.hdg = rw.h0; bot.rd = 0; bot.gOff = 0;
+        bot.spd = 0; bot.vy = 0; bot.hdgRate = 0; bot.vx = 0; bot.vz = 0; bot.pitch = 0; bot.bank = 0;
+        bot.phase = 'wait'; bot.waitUntil = clock + waitTime(F);
+        return;
+      }
+    }
+
+    // burilish: yonboshlash burchagi cheklangan => burilish tezligi ham cheklangan; burchak tezlanishi sekin
+    const spdN = Math.max(bot.spd, 14);
+    const wmax = (G * Math.tan(F.bank)) / spdN;
+    const err = wrapAngle(desH - bot.hdg);
+    const rateT = clamp(err * 0.8, -wmax, wmax);
+    const acc = wmax * 0.6 * dt;
+    bot.hdgRate += clamp(rateT - bot.hdgRate, -acc, acc);
+    bot.hdg = wrapAngle(bot.hdg + bot.hdgRate * dt);
+
+    // tezlik
+    let spdT;
+    if (bot.phase === 'gate' || bot.phase === 'final') {
+      const vApp = Math.max(vr * 1.12, bot.cruise * 0.62);
+      spdT = vApp + (bot.cruise - vApp) * clamp((dLand - 700) / 1500, 0, 1);
+    } else {
+      spdT = bot.cruise * (1 - 0.22 * clamp(Math.abs(err) / 0.9, 0, 1));
+    }
+    spdT = Math.max(spdT, vr * 1.05);
+    bot.spd += clamp(spdT - bot.spd, -F.decel * dt, F.accel * dt);
+    bot.vx = Math.sin(bot.hdg) * bot.spd; bot.vz = Math.cos(bot.hdg) * bot.spd;
+    bot.px += bot.vx * dt; bot.pz += bot.vz * dt;
+
+    // balandlik: nishab cheklangan, vertikal tezlanish yumshoq
+    const cMax = F.climb * 1.15 * spdN, sMax = F.sink * spdN;
+    let vyT = clamp((altT - bot.py) * 0.45, -sMax, cMax);
+    if (bot.phase === 'final') {
+      const h = bot.py - gH;
+      if (h < F.flareH) vyT = Math.max(vyT, -(0.6 + h * 0.3));   // yerga yaqin: sekinroq tushadi (flare)
+    }
+    bot.vy += clamp(vyT - bot.vy, -1.0 * dt, 1.0 * dt);
+    bot.py += bot.vy * dt;
+
+    // oxirgi himoya: to'siq/yer ichiga kirmaydi
+    const landNow = bot.phase === 'gate' || bot.phase === 'final';
+    bot.clr = landNow ? clamp(0.05 + Math.max(0, -along) * 0.02, 0.05, T.clearance) : Math.min(T.clearance, bot.clr + dt * 3);
+    const minY = floorAt(obstacles, bot.px, bot.pz, landNow ? 1 : 2) + bot.clr;
+    if (bot.py < minY) { bot.py = minY; if (bot.vy < 0) bot.vy = 0; }
+
+    // yerga tegdi: qo'nish tugadi, endi sekin to'xtaydi
+    if (bot.phase === 'final' && bot.py - groundAt(obstacles, bot.px, bot.pz) <= 0.4) {
+      const dx = bot.px - rw.pts[0][0], dz = bot.pz - rw.pts[0][1];
+      bot.rd = dx * Math.sin(rw.h0) + dz * Math.cos(rw.h0);
+      bot.gOff = dx * Math.cos(rw.h0) - dz * Math.sin(rw.h0);
+      bot.phase = 'rollout'; bot.vy = 0; bot.hdgRate = 0;
+    }
+
+    // ko'rinish: burun uchish yo'nalishi bo'yicha, hech qachon o'tkir pastga qaramaydi; yonboshlash burilishga ergashadi
+    const gamma = Math.atan2(bot.vy, Math.max(bot.spd, 10));
+    let pT = clamp(-(gamma + 0.04), -0.5, 0.1);
+    if (bot.phase === 'final' && bot.py - gH < F.flareH) pT = Math.min(pT, -0.06);
+    bot.pitch += (pT - bot.pitch) * Math.min(1, dt * 2.2);
+    const bankT = -clamp(Math.atan((bot.spd * bot.hdgRate) / G), -F.bank, F.bank);
+    bot.bank += (bankT - bot.bank) * Math.min(1, dt * 1.5);
+  }
+
+  // Vertolyot: tik ko'tariladi, yo'l bo'ylab silliq uchadi (burilishlarda sekinlashadi), padga yaqinlashib tik tushadi
+  function patrolHeli(bot, dt) {
+    const T = bot.T, F = T.fly, b = bot.baked;
+    const gH = groundAt(obstacles, bot.px, bot.pz);
+    if (bot.phase === 'wait') {
+      bot.spd = 0; bot.vx = 0; bot.vz = 0; bot.hvx = 0; bot.hvz = 0; bot.vy = 0; bot.hdgRate = 0;
+      bot.pitch += (0 - bot.pitch) * Math.min(1, dt * 3);
+      bot.bank += (0 - bot.bank) * Math.min(1, dt * 3);
+      bot.py = gH + 0.05;
+      if (clock >= bot.waitUntil) bot.phase = 'lift';
+      return;
+    }
+    if (bot.phase === 'lift') {   // parrak to'liq aylangach, tik va sekin ko'tariladi
+      const h = bot.py - gH;
+      bot.vy += clamp((h < 2.5 ? 0.9 : 2.4) - bot.vy, -dt, dt);
+      bot.py += bot.vy * dt;
+      bot.pitch += (0 - bot.pitch) * Math.min(1, dt * 3);
+      bot.bank += (0 - bot.bank) * Math.min(1, dt * 3);
+      if (h > F.liftH) {
+        bot.phase = 'fly';
+        bot.s = nearestS(b, bot.px, bot.pz, 0, 0, Math.min(b.len, 500)).s;
+        bot.passedMid = false; bot.planAt = 0; bot.liftT = clock;
+        bot.clr = clamp(h, 0.3, T.clearance);
+      }
+      return;
+    }
+
+    const landing = bot.phase === 'land';
+    let tx, tz, altT, vt, dist = 0;
+    if (!landing) {
+      let n = nearestS(b, bot.px, bot.pz, bot.s, bot.cycle ? Math.min(25, bot.s) : 25, bot.cycle ? Math.min(120, Math.max(30, b.len - bot.s)) : 120);
+      if (n.d > 400) { n = nearestS(b, bot.px, bot.pz, 0, 0, b.len); bot.s = n.s; }
+      else bot.s = advanceS(bot.s, n.s, b.len, Math.max(bot.spd, 6) * dt * 2.2);
+      if (bot.s > b.len * 0.5) bot.passedMid = true;
+      const Ld = clamp(bot.spd * 2.0, 22, 75);
+      sampleBaked(b, bot.s + Ld, A1);
+      sampleBaked(b, bot.s + Ld * 2, A2);
+      tx = A1.x; tz = A1.z;
+      const h1 = Math.atan2(A1.x - bot.px, A1.z - bot.pz), h2 = Math.atan2(A2.x - A1.x, A2.z - A1.z);
+      // burilish oldinda bo'lsa yoki burun noto'g'ri tomonga qarasa - sekinlashadi
+      vt = bot.cruise * (1 - 0.5 * clamp(Math.abs(wrapAngle(h2 - h1)) / 1.2, 0, 1)) * (1 - 0.3 * clamp(Math.abs(wrapAngle(h1 - bot.hdg)) / 1.5, 0, 1));
+      sampleBaked(b, bot.s + clamp(bot.spd * 2, 25, 90), A2);
+      altT = A2.y;
+      if (clock >= bot.planAt) {
+        bot.planAt = clock + 0.2 + Math.random() * 0.06;
+        const mh = bot.spd > 2 ? Math.atan2(bot.hvx, bot.hvz) : bot.hdg;
+        bot.needAlt = aheadNeed(bot, mh, Math.max(70, bot.spd * 5));
+      }
+      altT = Math.max(altT, bot.needAlt);
+      if (bot.cycle && bot.passedMid && bot.s > b.len * 0.6 && clock - bot.liftT > 20 && Math.hypot(bot.px - bot.home.x, bot.pz - bot.home.z) < F.landR) {
+        bot.phase = 'land'; bot.landT = clock;
+      }
+    } else {
+      const hx = bot.home.x, hz = bot.home.z;
+      dist = Math.hypot(hx - bot.px, hz - bot.pz);
+      tx = hx; tz = hz;
+      vt = clamp(dist * 0.45, 0, bot.cruise);                                   // yaqinlashgan sari sekinlashadi
+      altT = bot.home.y + (dist < 4 ? 0 : clamp((dist - 6) * 0.35, 0, 60));     // konus bo'ylab pastlaydi
+      if (clock - bot.landT > 120) {                                           // juda cho'zilsa: joyiga qo'yiladi
+        bot.px = hx; bot.pz = hz; bot.py = bot.home.y; bot.hdg = bot.home.h;
+        bot.hvx = 0; bot.hvz = 0; bot.vx = 0; bot.vz = 0; bot.vy = 0; bot.spd = 0;
+        bot.phase = 'wait'; bot.waitUntil = clock + waitTime(F);
+        return;
+      }
+    }
+
+    // gorizontal tezlik: tezlanishi cheklangan (vertolyot birdan to'xtamaydi/burilmaydi)
+    const hvh = Math.atan2(tx - bot.px, tz - bot.pz);
+    let ex = Math.sin(hvh) * vt - bot.hvx, ez = Math.cos(hvh) * vt - bot.hvz;
+    const el = Math.hypot(ex, ez), mx = F.accel * dt;
+    if (el > mx) { ex *= mx / el; ez *= mx / el; }
+    bot.hvx += ex; bot.hvz += ez;
+    bot.spd = Math.hypot(bot.hvx, bot.hvz);
+    bot.vx = bot.hvx; bot.vz = bot.hvz;
+    bot.px += bot.vx * dt; bot.pz += bot.vz * dt;
+
+    // burun: harakat yo'nalishiga (yoki qo'nayotganda pad yo'nalishiga) sekin buriladi
+    let yawT = bot.spd > 2.5 ? Math.atan2(bot.hvx, bot.hvz) : bot.hdg;
+    if (landing && dist < 40) yawT = bot.home.h;
+    const yerr = wrapAngle(yawT - bot.hdg);
+    bot.hdgRate += clamp(clamp(yerr * 1.4, -F.yaw, F.yaw) - bot.hdgRate, -F.yaw * 1.5 * dt, F.yaw * 1.5 * dt);
+    bot.hdg = wrapAngle(bot.hdg + bot.hdgRate * dt);
+
+    // balandlik
+    const cMax = Math.min(4, 1.5 + bot.spd * 0.3), sMax = Math.min(3.5, 1.2 + bot.spd * 0.25);
+    let vyT = clamp((altT - bot.py) * 0.5, -sMax, cMax);
+    if (landing) vyT = Math.max(vyT, -(0.5 + (bot.py - gH) * 0.2));
+    bot.vy += clamp(vyT - bot.vy, -1.5 * dt, 1.5 * dt);
+    bot.py += bot.vy * dt;
+
+    bot.clr = landing ? clamp(0.05 + dist * 0.12, 0.05, T.clearance) : Math.min(T.clearance, bot.clr + dt * 3);
+    const minY = floorAt(obstacles, bot.px, bot.pz, landing ? 1 : 2) + bot.clr;
+    if (bot.py < minY) { bot.py = minY; if (bot.vy < 0) bot.vy = 0; }
+
+    if (landing && dist < 3 && bot.py - gH <= bot.clr + 0.15) {   // tegdi: parrak sekin to'xtaydi
+      bot.px = bot.home.x; bot.pz = bot.home.z; bot.py = bot.home.y;
+      bot.hvx = 0; bot.hvz = 0; bot.vx = 0; bot.vz = 0; bot.vy = 0; bot.spd = 0; bot.hdgRate = 0;
+      bot.phase = 'wait'; bot.waitUntil = clock + waitTime(F);
+      return;
+    }
+
+    const fwd = bot.hvx * Math.sin(bot.hdg) + bot.hvz * Math.cos(bot.hdg);
+    const side = bot.hvx * Math.cos(bot.hdg) - bot.hvz * Math.sin(bot.hdg);   // chap tomonga siljish musbat
+    const pT = clamp((fwd / bot.cruise) * 0.22, -0.2, 0.28);
+    const bT = -clamp((side / bot.cruise) * 0.5 + bot.hdgRate * 0.1, -T.maxBank * 1.4, T.maxBank * 1.4);
+    bot.pitch += (pT - bot.pitch) * Math.min(1, dt * 2.5);
+    bot.bank += (bT - bot.bank) * Math.min(1, dt * 2);
+  }
+
+  // Oddiy botning bir freymi: holat + ko'rinish
+  function stepPatrol(bot, dt, cx, cy, cz) {
+    dt = Math.min(dt, 0.1);
+    if (dt > 0) {
+      if (bot.kind === 'plane') {
+        const vr = bot.cruise * bot.T.fly.vr;
+        if (bot.phase === 'wait') {
+          bot.spd = 0; bot.vx = 0; bot.vz = 0; bot.vy = 0;
+          bot.pitch += (0 - bot.pitch) * Math.min(1, dt * 3);
+          bot.bank += (0 - bot.bank) * Math.min(1, dt * 3);
+          if (clock >= bot.waitUntil) bot.phase = 'roll';
+        } else if (bot.phase === 'roll' || bot.phase === 'rollout') planeGround(bot, dt, vr);
+        else planeFly(bot, dt, vr);
+      } else patrolHeli(bot, dt);
+    }
+    // parrak: pad yonida turganda to'xtaydi; vertolyot ko'tarilishdan ~3 s oldin parragini aylantira boshlaydi
+    const spinOn = bot.kind === 'plane' ? bot.phase !== 'wait' : !(bot.phase === 'wait' && clock < bot.waitUntil - 3);
+    bot.spinK += clamp((spinOn ? 1 : 0) - bot.spinK, -dt * 0.3, dt * 0.45);
+    bot.mode = bot.phase === 'wait' ? 'parked' : 'patrol';
+    bot.curSpeed = bot.spd;
+    bot.dx = bot.px - cx; bot.dy = bot.py - cy; bot.dz = bot.pz - cz;
+    if (bot.dx * bot.dx + bot.dy * bot.dy + bot.dz * bot.dz > far2) {   // uzoqda: faqat joyini yangilaymiz, chizmaymiz
+      if (bot.group.visible) bot.group.visible = false;
+      return;
+    }
+    bot.group.visible = true;
+    bot.group.position.set(bot.px, bot.py, bot.pz);
+    bot.group.rotation.set(bot.pitch, bot.hdg, bot.bank);
+    const rate = bot.T.spin * dt * bot.spinK;
+    if (rate > 0) for (const sp of bot.spin) sp.rotation.y += rate;
+  }
+
   function update(dt, cx, cy, cz, heading = 0, silent = false) {
     clock += dt;
     if (dt > 0) {   // o'yinchining tezligi (hujum paytida nishonni oldindan hisoblash uchun)
@@ -958,47 +1499,7 @@ export function createAirFleet({ scene, makeModel, obstacles, maxBots = 24, make
       if (bot.rk.length) for (const rk of bot.rk) if (rk.at && clock >= rk.at) { rk.mesh.visible = true; rk.at = 0; }   // otilgan raketa o'rniga yangisi
       if (bot.combat) { stepCombat(bot, dt, cx, cy, cz, silent); continue; }
 
-      // ---- oddiy (jangovor emas) bot: yo'l bo'ylab uchadi ----
-      const b = bot.baked;
-      let sp = bot.speed;
-      if (b.pad) {   // uchish/qo'nish joyi yaqinida sekinlashadi
-        const d = Math.min(bot.s, b.len - bot.s);
-        sp *= bot.T.padSlow + (1 - bot.T.padSlow) * clamp(d / bot.T.padR, 0, 1);
-      }
-      bot.s += sp * dt;
-      bot.curSpeed = sp;
-      if (bot.s >= b.len) bot.s -= b.len;
-
-      sampleBaked(b, bot.s, P0);
-      if (bot.offK) {
-        const k = Math.exp(-dt * 1.5);
-        bot.offX *= k; bot.offY *= k; bot.offZ *= k; bot.hOff *= k;
-        if (Math.abs(bot.offX) + Math.abs(bot.offY) + Math.abs(bot.offZ) + Math.abs(bot.hOff) < 0.05) { bot.offX = bot.offY = bot.offZ = bot.hOff = 0; bot.offK = false; }
-        P0.x += bot.offX; P0.y += bot.offY; P0.z += bot.offZ;
-      }
-      const dx = P0.x - cx, dy = P0.y - cy, dz = P0.z - cz;
-      bot.dx = dx; bot.dy = dy; bot.dz = dz;
-      if (dx * dx + dy * dy + dz * dz > far2) {            // uzoqda: faqat joyini yangilaymiz, chizmaymiz
-        if (bot.group.visible) bot.group.visible = false;
-        continue;
-      }
-      bot.group.visible = true;
-
-      sampleBaked(b, bot.s + 6, P1);
-      sampleBaked(b, bot.s + 12, P2);
-      const h1 = Math.atan2(P1.x - P0.x, P1.z - P0.z);
-      const h2 = Math.atan2(P2.x - P1.x, P2.z - P1.z);
-      const turn = wrapAngle(h2 - h1) / 6;                  // rad/m: burilish keskinligi
-      const flat = Math.hypot(P1.x - P0.x, P1.z - P0.z) || 0.001;
-      const pitch = -Math.atan2(P1.y - P0.y, flat);         // burun yo'nalish bo'yicha ko'tariladi/tushadi
-      const bankTarget = -clamp(Math.atan((bot.speed * bot.speed * turn) / 9.81), -bot.T.maxBank, bot.T.maxBank);
-      bot.bank += (bankTarget - bot.bank) * Math.min(1, dt * 2.5);
-      bot.vx = Math.sin(h1 + bot.hOff) * sp; bot.vz = Math.cos(h1 + bot.hOff) * sp;
-
-      bot.group.position.set(P0.x, P0.y, P0.z);
-      bot.group.rotation.set(pitch, h1 + bot.hOff, bot.bank);
-      const rate = bot.T.spin * dt;
-      for (const s of bot.spin) s.rotation.y += rate;
+      stepPatrol(bot, dt, cx, cy, cz);   // oddiy bot: odamdek uchadi
     }
     updateVoices(cx, cy, cz, heading, silent);
   }

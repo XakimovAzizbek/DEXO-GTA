@@ -12,7 +12,7 @@ import { showSaveDialog } from './savefile.js';
 import { cachedFetchArrayBuffer, evictGLBCache } from './glbCache.js';
 import {
   AIR_TYPES, AIR_MAX_POINTS, AIR_MAX_PATHS, AIR_MAX_BOTS,
-  normalizeAirPath, buildAirObstacles, checkAirPath, sampleAirPath, groundAt, padBlocked, findParkSpot,
+  normalizeAirPath, buildAirObstacles, checkAirPath, sampleAirPath, groundAt, padBlocked, findParkSpot, floorAt, AIR_RUNWAY_MAX_PTS,
 } from './airFleet.js';
 
 const $ = (id) => document.getElementById(id);
@@ -574,6 +574,8 @@ let airPad = null;            // uchish/qo'nish joyi [x, z]
 let airPadMode = false;       // true bo'lsa, keyingi bosish joyni belgilaydi
 let airRange = 1;             // AI masofa darajasi (1 = eng yaqin)
 let airBusy = false;          // AI hisoblayotganda ikkinchi marta bosilmasin
+let airRunway = [];           // chizilayotgan uchish yo'lagi: joydan (airPad) keyingi nuqtalar [[x, z], ...] (faqat samolyot)
+let airRunwayMode = false;    // true bo'lsa, keyingi bosishlar yo'lak nuqtalarini qo'shadi
 let airCombat = false;        // true bo'lsa: yangi yo'llar (va faol yo'l) JANGOVOR bo'ladi - o'yinchi raketa otsa hujum qiladi
 const AIR_RANGE_MAX = 10;
 const AIR_AI_BATCH = 10;
@@ -604,6 +606,7 @@ function airData() {
     const o = { type: p.type, count: p.count, pts: p.pts.map((q) => q.slice()) };
     if (p.model) o.model = p.model;
     if (p.pad) o.pad = p.pad.slice();
+    if (p.runway) o.runway = p.runway.map((q) => q.slice());
     if (p.speed) o.speed = p.speed;
     if (p.combat) o.combat = true;
     if (p.post) o.post = true;
@@ -766,6 +769,20 @@ function drawAir() {
       new THREE.LineBasicMaterial({ color: 0x2ee86f }),
     ));
   }
+  // uchish yo'laklari (sariq - saqlangan, oq - chizilayotgan)
+  const rwLine = (pts, color, opacity) => {
+    if (pts.length < 2) return;
+    const v = pts.map((q) => new THREE.Vector3(q[0], groundAt(obs, q[0], q[1]) + 0.7, q[1]));
+    const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest: false }));
+    ln.renderOrder = 7;
+    airGroup.add(ln);
+    const e = v[v.length - 1];
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2, 3.6, 24).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, depthTest: false }));
+    ring.position.copy(e); ring.renderOrder = 7;
+    airGroup.add(ring);
+  };
+  airPaths.forEach((p, idx) => { if (p.runway) rwLine(p.runway, 0xffe14d, idx === airActive ? 1 : 0.7); });
+  if (airPad && airRunway.length) rwLine([airPad, ...airRunway], 0xffffff, 1);
   updateAirUI();
 }
 
@@ -783,6 +800,12 @@ function updateAirUI() {
   $('airPadSet').classList.toggle('is-active', airPadMode);
   $('airPadSet').textContent = airPadMode ? '📍 Xaritaga bosing…' : (airPad ? '📍 Joyni o‘zgartirish' : '📍 Joy belgilash');
   $('airPadClear').disabled = !airPad;
+  if ($('airRunwaySet')) {
+    $('airRunwaySet').classList.toggle('is-active', airRunwayMode);
+    $('airRunwaySet').textContent = airRunwayMode ? `🛬 Chiziq: ${airRunway.length} nuqta (xaritaga bosing…)` : '🛬 Uchish yo‘lagi chizish';
+    $('airRunwaySave').disabled = airBusy || !airRunway.length;
+    $('airRunwayClear').disabled = !airRunway.length && !(p && p.runway);
+  }
   if ($('airCombat')) {
     $('airCombat').textContent = airCombat ? '⚔️ Jangovor: yoqilgan' : '⚔️ Jangovor: o‘chiq';
     $('airCombat').classList.toggle('is-active', airCombat);
@@ -803,7 +826,9 @@ function updateAirUI() {
   }
 
   let text;
-  if (airPadMode) {
+  if (airRunwayMode) {
+    text = '🛬 Samolyot yuguradigan chiziqni chizing: oq halqadan (joydan) boshlab xaritaga bosing (necha metr bo‘lsa ham). Tugagach “💾 Yo‘lakni saqlash”.';
+  } else if (airPadMode) {
     text = '📍 Xaritada samolyot/vertolyot uchib chiqadigan va qaytib qo‘nadigan joyni bosing.';
   } else if (!p) {
     text = airPaths.length
@@ -811,7 +836,7 @@ function updateAirUI() {
       : 'Xaritaga ketma-ket bosing: har bosish bitta yo‘l nuqtasi (oq nuqta - boshi). Kamida 3 nuqta kerak. Yoki “🤖 AI yo‘llar” ni bosing.';
   } else {
     const st = airStatus[airActive];
-    const head = `${AIR_ICON[p.type]} ${p.model ? `${p.model}, ` : ''}${p.pts.length} nuqta, ${p.count} bot${p.pad ? ', 🛫 uchish/qo‘nish bor' : ''}${p.combat ? ', ⚔️ jangovor' : ''}. `;
+    const head = `${AIR_ICON[p.type]} ${p.model ? `${p.model}, ` : ''}${p.pts.length} nuqta, ${p.count} bot${p.pad ? ', 🛫 uchish/qo‘nish bor' : ''}${p.runway ? ', 🛬 yo‘lak bor' : ''}${p.combat ? ', ⚔️ jangovor' : ''}. `;
     if (p.post) text = `${AIR_ICON[p.type]} ${p.model ? `${p.model}, ` : ''}⚔️ jangovor joy, ${p.count} bot. Faqat jang paytida uchadi, bo‘lmasa shu joyda jim turadi. To‘siq tekshirilmaydi: AI o‘zi hisoblaydi.`;
     else if (!st) text = head + `Yo‘l yopilishi uchun yana ${3 - p.pts.length} nuqta kerak.`;
     else if (st.ok) text = head + '✅ Yo‘l xavfsiz.';
@@ -826,7 +851,7 @@ function updateAirUI() {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'mini' + (i === airActive ? ' is-active' : '');
-    b.textContent = `${AIR_ICON[q.type]} ${i + 1}${q.pad ? ' 🛫' : ''}${q.combat ? ' ⚔️' : ''}${q.post ? ' 📍' : ''}`;
+    b.textContent = `${AIR_ICON[q.type]} ${i + 1}${q.pad ? ' 🛫' : ''}${q.runway ? ' 🛬' : ''}${q.combat ? ' ⚔️' : ''}${q.post ? ' 📍' : ''}`;
     b.addEventListener('click', () => {
       airActive = i; airType = q.type; airCount = q.count; airModel = q.model || null; airCombat = !!q.combat;
       airAlt = q.pts.length ? Math.round(q.pts[q.pts.length - 1][2]) : AIR_TYPES[q.type].defAlt;
@@ -841,6 +866,7 @@ function airChanged() { scheduleSave(); drawAir(); }
 function setAirPad(x, z) {
   airPad = [clampX(snapV(x)), clampZ(snapV(z))];
   airPadMode = false;
+  airRunway = [];
   saveAirPad();
   if (airCombat) toast('⚔️ Jangovor joy belgilandi. Endi “🛫 AI: shu joydan” ni bosing: AI to‘siq bo‘lsa ham bo‘sh joyni o‘zi topadi.', 4000);
   else if (padBlocked(airObs(), airPad[0], airPad[1])) toast('Diqqat: bu joyda to‘siq (uy, daraxt yoki tog‘) bor. Bo‘sh joyni belgilang.', 4500);
@@ -868,6 +894,7 @@ function addCombatPost(x, z) {
 }
 
 function addAirPoint(x, z) {
+  if (airRunwayMode) { addRunwayPoint(x, z); return; }
   if (airPadMode) { setAirPad(x, z); return; }
   if (airCombat) { addCombatPost(x, z); return; }
   let p = airPaths[airActive];
@@ -966,6 +993,62 @@ $('airDel').addEventListener('click', () => {
   airActive = -1;
   airChanged();
 });
+
+// ----- Uchish yo'lagi (faqat samolyot): joydan boshlab qo'lda chiziq chiziladi -----
+// 1) "📍 Joy belgilash"  2) "🛬 Uchish yo'lagi chizish" va xaritaga bosib chiziq (necha metr bo'lsa ham)  3) "💾 Yo'lakni saqlash".
+// Jangovor yoqilgan bo'lsa: jangovor samolyot shu yerda turadi, chiziq bo'ylab yuguradi va chiziq tugaganda sekin ko'tarilib o'z yo'nalishida uchadi.
+// Jangovor o'chiq bo'lsa: oddiy AI samolyot shu yo'lakdan uchib chiqadi, aylanib kelib shu yo'lakka qo'nadi va sekin to'xtaydi.
+function addRunwayPoint(x, z) {
+  if (!airPad) {
+    airRunwayMode = false;
+    toast('Avval “📍 Joy belgilash” ni bosib, joyni belgilang. Yo‘lak shu joydan boshlanadi.', 4500);
+    drawAir();
+    return;
+  }
+  if (airRunway.length >= AIR_RUNWAY_MAX_PTS - 1) { toast(`Yo‘lakda eng ko‘pi bilan ${AIR_RUNWAY_MAX_PTS} nuqta`); return; }
+  const q = [clampX(snapV(x)), clampZ(snapV(z))];
+  const last = airRunway.length ? airRunway[airRunway.length - 1] : airPad;
+  if (Math.hypot(q[0] - last[0], q[1] - last[1]) < 2) { toast('Nuqta oldingisiga juda yaqin'); return; }
+  airRunway.push(q);
+  drawAir();
+}
+function addCombatRunway(rw) {
+  const opt = currentAirOption();
+  const post = { type: 'plane', count: airCount, combat: true, post: true, pts: [[rw[0][0], rw[0][1], 0.2]], runway: rw.map((q) => q.slice()) };
+  if (opt && opt.name) post.model = opt.name;
+  airPaths.push(post);
+  airActive = airPaths.length - 1;
+  airType = 'plane';
+  toast('⚔️ Jangovor samolyot yo‘lagi saqlandi ✅ Jang paytida shu chiziq bo‘ylab yuguradi, chiziq tugaganda sekin ko‘tarilib uchadi.', 4500);
+  airChanged();
+}
+async function saveRunway() {
+  if (airBusy) return;
+  if (!airPad) { toast('Avval “📍 Joy belgilash” ni bosing.', 3500); return; }
+  const opt = currentAirOption();
+  if (!opt || opt.kind !== 'plane') { toast('Uchish yo‘lagi faqat samolyot uchun. Samolyot modelini tanlang.', 4000); return; }
+  if (!airRunway.length) { toast('Avval “🛬 Uchish yo‘lagi chizish” ni bosib, xaritada chiziq chizing.', 4000); return; }
+  const rw = [airPad.slice(), ...airRunway.map((q) => q.slice())];
+  let len = 0;
+  for (let i = 1; i < rw.length; i++) len += Math.hypot(rw[i][0] - rw[i - 1][0], rw[i][1] - rw[i - 1][1]);
+  if (len < 8) { toast('Chiziq juda qisqa (kamida 8 m).', 3500); return; }
+  if (airCombat) {
+    addCombatRunway(rw);
+  } else {
+    const p = airPaths[airActive];
+    if (p && !p.post && p.type === 'plane' && p.pad && p.pts.length >= 3 && Math.hypot(p.pad[0] - airPad[0], p.pad[1] - airPad[1]) < 2) {
+      p.runway = rw;   // tanlangan yo'l shu joydan chiqsa, unga biriktiramiz
+      toast('🛬 Uchish yo‘lagi tanlangan yo‘lga biriktirildi ✅', 3500);
+      airChanged();
+    } else {
+      const ok = await addPadRoute(airRange, rw);   // AI shu yo'lakdan chiqadigan va qaytib qo'nadigan yo'l yasaydi
+      if (!ok) return;
+    }
+  }
+  airRunway = [];
+  airRunwayMode = false;
+  drawAir();
+}
 
 // ----- AI: yo'l yasash -----
 function insideBounds(samples, m) {
@@ -1081,16 +1164,17 @@ function apCircle(px, pz, ang, dir, D, maxPts) {
   return pts;
 }
 // Balandlik profili: boshida yumshoq ko'tarilish (~6°), oxirida yumshoq pastlash, o'rtada H da
-function apProfile(pts2, gy, H) {
+function apProfile(pts2, gy, H, lead = 0, kind = 'plane') {
   const n = pts2.length;
   const s = [0];
   for (let i = 1; i < n; i++) s.push(s[i - 1] + Math.hypot(pts2[i][0] - pts2[i - 1][0], pts2[i][1] - pts2[i - 1][1]));
   const L = s[n - 1] + Math.hypot(pts2[0][0] - pts2[n - 1][0], pts2[0][1] - pts2[n - 1][1]);
   const dH = Math.max(1, H - gy);
-  const Lc = Math.min(L * 0.4, Math.max(150, dH / 0.10));
-  const Ld = Math.min(L * 0.4, Math.max(150, dH / 0.08));
+  const heli = kind === 'heli';   // vertolyot tik ko'tariladi va tik tushadi: nishab ancha tik
+  const Lc = Math.min(L * 0.4, Math.max(heli ? 40 : 150, dH / (heli ? 0.3 : 0.10)));
+  const Ld = Math.min(L * 0.4, Math.max(heli ? 40 : 150, dH / (heli ? 0.25 : 0.08)));
   return pts2.map((q, i) => {
-    const up = ap_smooth(Math.min(1, s[i] / Lc)), down = ap_smooth(Math.min(1, (L - s[i]) / Ld));
+    const up = ap_smooth(Math.min(1, Math.max(0, s[i] - lead) / Lc)), down = ap_smooth(Math.min(1, (L - s[i]) / Ld));
     return [r1(q[0]), r1(q[1]), r1(gy + Math.min(up, down) * dH)];
   });
 }
@@ -1143,9 +1227,9 @@ function apRepair(path, obs, maxIter) {
 }
 
 // Nomzodni tekshirib, ball beradi (kam = yaxshi)
-function apEvaluate(opt, pts, obs, others, px, pz, usedHeads) {
+function apEvaluate(opt, pts, obs, others, px, pz, usedHeads, runway = null) {
   const T = AIR_TYPES[opt.kind];
-  const path = normalizeAirPath({ type: opt.kind, model: opt.name || undefined, count: airCount, pad: [px, pz], pts });
+  const path = normalizeAirPath({ type: opt.kind, model: opt.name || undefined, count: airCount, pad: [px, pz], pts, runway: runway || undefined });
   if (!path.pad || path.pts.length < 6) return null;
   const res = apRepair(path, obs, 9);
   if (!res) return null;
@@ -1158,34 +1242,93 @@ function apEvaluate(opt, pts, obs, others, px, pz, usedHeads) {
   return { path, score };
 }
 
-async function genPadRoute(opt, level, obs, others, usedHeads) {
+// Tez (arzon) tekshiruv: nomzod yo'l bo'ylab to'siq profil balandligidan baland bo'lgan joylar soni (kam = yaxshi)
+function apQuickBad(opt, prof, obs, px, pz) {
+  const T = AIR_TYPES[opt.kind];
+  let bad = 0;
+  const n = prof.length;
+  for (let i = 0; i < n; i++) {
+    const a = prof[i], b = prof[(i + 1) % n];
+    const k = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 60));
+    for (let f = 0; f < k; f++) {
+      const t = f / k;
+      const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t, y = a[2] + (b[2] - a[2]) * t;
+      const q = Math.max(0, Math.min(1, Math.hypot(x - px, z - pz) / T.padR));
+      const need = floorAt(obs, x, z, 2 + (T.margin - 2) * q) + 0.5 + (T.clearance - 0.5) * q;
+      if (y < need) bad += need - y > 40 ? 3 : 1;
+    }
+  }
+  return bad;
+}
+// Kruiz balandlik: marshrutdagi eng baland to'siq (uy, tog') ustidan o'tadigan qilib tanlanadi (uylar ustidan uchadi)
+function apPickH(opt, shape, obs, px, pz, H0) {
+  const T = AIR_TYPES[opt.kind];
+  let need = 0;
+  const n = shape.length;
+  for (let i = 0; i < n; i++) {
+    const a = shape[i], b = shape[(i + 1) % n];
+    const k = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 60));
+    for (let f = 0; f < k; f++) {
+      const t = f / k;
+      const x = a[0] + (b[0] - a[0]) * t, z = a[1] + (b[1] - a[1]) * t;
+      if (Math.hypot(x - px, z - pz) < T.padR * 1.5) continue;
+      const v = floorAt(obs, x, z, T.margin) + T.clearance;
+      if (v > need) need = v;
+    }
+  }
+  return Math.max(T.minAlt, Math.min(T.maxAlt * 0.95, Math.max(H0, need + 10)));
+}
+
+// runway - [[x,z],...] (chizilgan uchish yo'lagi) bo'lsa: marshrut aynan shu chiziq yo'nalishida chiqadi
+async function genPadRoute(opt, level, obs, others, usedHeads, runway = null) {
   const T = AIR_TYPES[opt.kind];
   const [px, pz] = airPad;
   const gy = groundAt(obs, px, pz) + 0.5;
   const D0 = padDistance(opt.kind, level);
   const maxPts = Math.max(12, Math.min(AIR_MAX_POINTS, 80));
+  let lead = 0, rwAng = null;
+  if (runway && runway.length >= 2) {
+    for (let i = 1; i < runway.length; i++) lead += Math.hypot(runway[i][0] - runway[i - 1][0], runway[i][1] - runway[i - 1][1]);
+    const e = runway[runway.length - 1];
+    rwAng = Math.atan2(e[1] - runway[0][1], e[0] - runway[0][0]);
+  }
   const t0 = performance.now();
+  let fitAtFull = null;
   for (let fi = 0; fi < AP_FACTORS.length; fi++) {
     const D = D0 * AP_FACTORS[fi];
-    const roundEnd = t0 + AP_BUDGET_MS * (fi + 1) / AP_FACTORS.length;
-    let best = null, tries = 0;
-    while (performance.now() < roundEnd && tries < 40) {
-      // zonaga sig'adigan yo'nalishni tanlaymiz (arzon tekshiruv)
-      let pts2 = null;
-      for (let g = 0; g < 80 && !pts2; g++) {
-        const ang = rand(0, TAU), side = Math.random() < 0.5 ? 1 : -1;
-        const cand = Math.random() < 0.7 ? apStadium(px, pz, ang, side, D, rand(0.14, 0.26), maxPts) : apCircle(px, pz, ang, side, D, maxPts);
-        if (apInside(cand, 10)) pts2 = cand;
+    // 1) zonaga SIG'ADIGAN hamma shakllar (burchaklar to'liq aylanib chiqiladi: zona chegarasigacha uchishi mumkin)
+    const shapes = [];
+    const nA = rwAng !== null ? 1 : 48, a0 = rand(0, TAU / 48);
+    for (let ai = 0; ai < nA; ai++) {
+      const ang = rwAng !== null ? rwAng : a0 + (TAU * ai) / nA;
+      for (const side of [1, -1]) {
+        for (const rf of [0.12, 0.18, 0.26]) {
+          const cand = apStadium(px, pz, ang, side, D, rf, maxPts);
+          if (apInside(cand, 10)) shapes.push(cand);
+        }
+        if (rwAng === null) { const c = apCircle(px, pz, ang, side, D, maxPts); if (apInside(c, 10)) shapes.push(c); }
       }
-      if (!pts2) break;     // bu masofa zonaga sig'maydi: qisqartiramiz
+    }
+    if (fitAtFull === null) fitAtFull = shapes.length > 0;
+    if (!shapes.length) continue;      // bu masofa zonaga sig'maydi: qisqartiramiz
+    // 2) har bir shakl uchun real balandlik profili (to'siqlar ustidan ko'tarilib o'tadi), eng kam muammoli nomzodlar oldinda
+    const cands = shapes.map((shape) => {
+      const H0 = Math.max(T.minAlt, Math.min(T.maxAlt * 0.9, T.defAlt * rand(0.9, 1.5)));
+      const H = apPickH(opt, shape, obs, px, pz, H0);
+      const prof = apProfile(shape, gy, H, lead, opt.kind);
+      return { prof, bad: apQuickBad(opt, prof, obs, px, pz) + rand(0, 1.5) };
+    }).sort((a, b) => a.bad - b.bad);
+    // 3) eng yaxshilarini to'liq tekshiramiz (vaqt chegarasiga qaramay kamida bir nechtasi sinaladi)
+    let best = null, tries = 0;
+    for (const c of cands.slice(0, 14)) {
       tries++;
-      const H = Math.max(T.minAlt, Math.min(T.maxAlt * 0.9, T.defAlt * rand(0.9, 1.5)));
-      const ev = apEvaluate(opt, apProfile(pts2, gy, H), obs, others, px, pz, usedHeads);
+      const ev = apEvaluate(opt, c.prof, obs, others, px, pz, usedHeads, runway);
       if (ev && (!best || ev.score < best.score)) best = ev;
-      if (best && (best.score < 1 || tries >= 10)) break;
+      if (best && (best.score < 1 || tries >= 6)) break;
       await tick();
     }
-    if (best) return { ...best, dist: Math.round(D) };
+    if (best) return { ...best, dist: Math.round(D), fitAtFull };
+    if (performance.now() - t0 > AP_BUDGET_MS * 2) break;
   }
   return null;
 }
@@ -1265,7 +1408,7 @@ async function claudePadRoute(key, opt, level, obs, others, usedHeads) {
     pts2[0] = [px, pz];
     const alts = arr.map((q) => Number(q[2])).filter(Number.isFinite).sort((a, b) => a - b);
     const H = Math.max(T.minAlt, Math.min(T.maxAlt * 0.9, alts.length ? alts[Math.floor(alts.length / 2)] : T.defAlt));
-    const pts = apProfile(pts2, gy, H);          // yumshoq ko'tarilish/pastlashni kafolatlaydi
+    const pts = apProfile(pts2, gy, H, 0, opt.kind);          // yumshoq ko'tarilish/pastlashni kafolatlaydi
     const ev = apEvaluate(opt, pts, obs, others, px, pz, usedHeads);
     if (ev) return { ...ev, dist: Math.round(D) };
     // Xato bo'lsa: xavfli joylarni Claude'ga qaytaramiz
@@ -1310,7 +1453,7 @@ async function addAiLoops() {
   }
 }
 
-async function addPadRoute(level) {
+async function addPadRoute(level, runway = null) {
   if (airBusy) return false;
   if (!airPad) { toast('Avval “📍 Joy belgilash” ni bosib, xaritada uchish/qo‘nish joyini belgilang.', 4500); return false; }
   const obs = airObs();
@@ -1324,7 +1467,7 @@ async function addPadRoute(level) {
       .map((p) => Math.atan2(p.pts[1][0] - p.pad[0], p.pts[1][1] - p.pad[1]));
     const others = otherSamples();
     let best = null, via = 'AI';
-    const key = getClaudeKey();
+    const key = runway ? '' : getClaudeKey();   // chizilgan yo'lak bo'lsa, ichki AI (yo'lak yo'nalishini hisobga oladi)
     if (key) {
       toast('🧠 Claude Sonnet 5.5 yo‘lni rejalayapti… (bir necha soniya)', 6000);
       try { best = await claudePadRoute(key, opt, level, obs, others, used); if (best) via = 'Claude'; }
@@ -1333,7 +1476,7 @@ async function addPadRoute(level) {
     if (!best) {
       toast('AI yo‘lni hisoblayapti… (to‘siqlarni chetlab o‘tadi)', 4000);
       await tick();
-      best = await genPadRoute(opt, level, obs, others, used);
+      best = await genPadRoute(opt, level, obs, others, used, runway);
     }
     if (!best) {
       toast('Xavfsiz yo‘l topilmadi: joy atrofi to‘siqlar bilan o‘ralgan yoki juda baland tog‘lar bor. Joyni boshqa yerga ko‘chiring.', 6000);
@@ -1345,9 +1488,12 @@ async function addPadRoute(level) {
     airType = best.path.type;
     scheduleSave();
     const want = padDistance(opt.kind, level);
+    const rwNote = runway ? ' Yo‘lak bo‘ylab yuguradi, sekin ko‘tariladi.' : '';
     toast(best.dist < want
-      ? `🛫 ${via}: yo‘l qo‘shildi, ${best.dist} m gacha (${want} m zonaga sig‘madi) ✅`
-      : `🛫 ${via}: yo‘l qo‘shildi: ${best.dist} m gacha uchib, shu joyga qo‘nadi ✅`, 4000);
+      ? (best.fitAtFull === false
+        ? `🛫 ${via}: yo‘l qo‘shildi, ${best.dist} m gacha (${want} m zona chegarasidan oshadi) ✅${rwNote}`
+        : `🛫 ${via}: yo‘l qo‘shildi, ${best.dist} m gacha (${want} m yo‘lda to‘siq: tog‘/bino ustidan o‘tib bo‘lmadi) ✅${rwNote}`)
+      : `🛫 ${via}: yo‘l qo‘shildi: ${best.dist} m gacha uchib, shu joyga qo‘nadi ✅${rwNote}`, 4500);
     return true;
   } finally {
     airBusy = false;
@@ -1358,10 +1504,30 @@ async function addPadRoute(level) {
 $('airAuto').addEventListener('click', addAiLoops);
 $('airPadSet').addEventListener('click', () => {
   airPadMode = !airPadMode;
+  if (airPadMode) airRunwayMode = false;
   if (airPadMode) toast('Xaritada uchish va qo‘nish joyini bosing');
   drawAir();
 });
-$('airPadClear').addEventListener('click', () => { airPad = null; airPadMode = false; saveAirPad(); drawAir(); });
+$('airPadClear').addEventListener('click', () => { airPad = null; airPadMode = false; airRunway = []; airRunwayMode = false; saveAirPad(); drawAir(); });
+if ($('airRunwaySet')) {
+  $('airRunwaySet').addEventListener('click', () => {
+    if (!airPad) { toast('Avval “📍 Joy belgilash” ni bosib, joyni belgilang.', 3500); return; }
+    const opt = currentAirOption();
+    if (!opt || opt.kind !== 'plane') { toast('Uchish yo‘lagi faqat samolyot uchun. Samolyot modelini tanlang.', 4000); return; }
+    airRunwayMode = !airRunwayMode;
+    airPadMode = false;
+    if (airRunwayMode) toast('Joydan boshlab xaritaga bosib chiziq chizing. Tugagach “💾 Yo‘lakni saqlash”.', 4500);
+    drawAir();
+  });
+  $('airRunwaySave').addEventListener('click', saveRunway);
+  $('airRunwayClear').addEventListener('click', () => {
+    const p = airPaths[airActive];
+    if (airRunway.length) { airRunway = []; }
+    else if (p && p.runway) { delete p.runway; scheduleSave(); }
+    airRunwayMode = false;
+    drawAir();
+  });
+}
 $('airPadAI').addEventListener('click', () => {
   // Jangovor bot: yo'l hisoblanmaydi va to'siq haqida xabar chiqmaydi - AI belgilangan joy atrofidan bo'sh joy topadi.
   // Bot jangda xaritaning istalgan joyiga (zona chegarasigacha) o'zi uchib boradi.
@@ -1418,6 +1584,7 @@ function setTool(next) {
   document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('is-active', b.dataset.tool === next));
   document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== next; });
   if (next !== 'select') selectEntry(null);
+  if (next !== 'air' && airRunwayMode) { airRunwayMode = false; drawAir(); }
   if (next !== 'air' && airPadMode) { airPadMode = false; drawAir(); }   // joy belgilash rejimi havo panelidan chiqqanda o'chadi
   // Kamera rejimida bir barmoq aylantiradi; boshqa rejimlarda bir barmoq obyektlar uchun
   const rotate = next === 'camera';
