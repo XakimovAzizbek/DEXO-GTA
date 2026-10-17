@@ -26,4 +26,4 @@ speed: 3
 
 name: AIRPLANE
 airplane: airplane2-v1.glb
-length: 40
+length: 60

@@ -1,3 +1,11 @@
+name: L9
+car: lixiang_l9-draco.glb
+length: 11.3
+rotate: 180
+carx: -0.1
+camheight: 5.3
+aimy: 2.5
+
 name: 2018_ford_everestendeavour
 car: 2018_ford_everestendeavour-draco.glb
 length: 9.9

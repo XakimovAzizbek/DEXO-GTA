@@ -9,3 +9,12 @@ name: uy8 glb: low_poly_city_block-v1.glb
 name: uy9 glb: game_ready_city_building-v1.glb
 name: uy10 glb: city_building_downtown-v1.glb
 name: uy11 glb: gta_vice_city_appartment-v1.glb
+name: uy12 glb: police_station-v1.glb
+name: uy13 glb: paris_police_station-v1.glb
+name: uy14 glb: oliy_majlis_binosi.-draco.glb
+name: uy15 glb: modern_house-draco.glb
+name: uy16 glb: house-draco.glb
+name: uy17 glb: beautiful_house-draco.glb
+name: uy18 glb: w2w_building_135o_degree_german_style-draco.glb
+name: uy19 glb: q7_l9.glb
+name: uy20 glb: free_lowpoly_3d_models_house.glb
