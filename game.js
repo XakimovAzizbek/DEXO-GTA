@@ -223,10 +223,198 @@ for (const o of objects) {
   colliders.push(c);
 }
 
-// ---------- GLB uylar ----------
-// Har bir GLB fayl bir marta yuklanadi, uning har bir mesh'i uchun BITTA InstancedMesh quriladi (ko'p uy bo'lsa ham tez).
-// Yuklanguncha uy ko'rinmaydi; yuklanmasa (fayl topilmasa) oddiy uy shakli qoladi. To'qnashuv qutisi va balandligi
-// modelning haqiqiy o'lchamiga moslanadi.
+// ---------- GLB uylar (LOD: yaqinda to'liq sifat, uzoqda xiraroq, juda uzoqda chizilmaydi) ----------
+// Har bir GLB fayl bir marta yuklanadi. Har bir uy uchun ikkita variant quriladi:
+//   1) "hi" - asl model (hech narsasi kamaymaydi) - uyga yaqin kelganda shu ko'rinadi;
+//   2) "lo" - xiraroq variant: shakli o'sha-o'sha, lekin poligonlari kamaytirilgan va teksturasi kichraytirilgan -
+//      uzoqdan shu ko'rinadi (GTA'dagidek: yaqinlashganda o'zi tiniqlashadi).
+// Tuman ortidagi uylar umuman chizilmaydi. Uzoq uylar soya tashlamaydi. Katta tekstura va geometriya
+// uyga yaqinlashishdan OLDIN bittalab GPU'ga yuklab qo'yiladi - shuning uchun uy ko'ringan paytda qotish bo'lmaydi.
+// To'qnashuv qutisi va balandligi modelning haqiqiy o'lchamiga moslanadi.
+const HOUSE_LOD = {
+  near: 110,     // uy chetidan shu masofadan uzoqda - "lo" (xiraroq) variant
+  back: 90,      // shu masofadan yaqin kelganda "hi" ga qaytadi (almashuv titramasligi uchun near'dan kichikroq)
+  warm: 220,     // shu masofaga kelganda "hi" GPU'ga oldindan yuklanadi
+  shadow: 100,   // soya faqat shu masofagacha
+  tex: 192,      // "lo" teksturasining eng katta tomoni (piksel)
+  triRatio: 0.2, // "lo" geometriyasi asl poligonlarning taxminan shuncha qismini oladi
+  minTris: 1200, // bundan kam poligonli bo'lakni soddalashtirmaymiz
+};
+const houseLods = [];   // { x, z, radius, hi: [Mesh], lo: [Mesh], loDone, mode, shadow, warmed }
+const lodJobs = [];
+let lodBusy = false;
+
+// --- Vertex-klaster usuli bilan geometriyani soddalashtirish (shakl saqlanadi, poligon kamayadi) ---
+function clusterGeometryData(d, grid) {
+  const { P, N, UV, C, cs, idx, min, size } = d;
+  const vn = P.length / 3;
+  const inv = grid / Math.max(size, 1e-6);
+  const map = new Map();
+  const remap = new Uint32Array(vn);
+  const accP = new Float32Array(vn * 3);
+  const accN = N ? new Float32Array(vn * 3) : null;
+  const accUV = UV ? new Float32Array(vn * 2) : null;
+  const accC = C ? new Float32Array(vn * cs) : null;
+  const cnt = new Uint32Array(vn);
+  let cn = 0;
+  for (let i = 0; i < vn; i++) {
+    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+    const ix = Math.min(grid - 1, Math.max(0, Math.floor((x - min.x) * inv)));
+    const iy = Math.min(grid - 1, Math.max(0, Math.floor((y - min.y) * inv)));
+    const iz = Math.min(grid - 1, Math.max(0, Math.floor((z - min.z) * inv)));
+    let key = (ix * 512 + iy) * 512 + iz;
+    // UV bo'lagi ham kalitga kiradi - turli tekstura bo'laklari bir-biriga aralashib ketmasin
+    if (UV) key = key * 4096 + (Math.floor(UV[i * 2] * 8) & 63) * 64 + (Math.floor(UV[i * 2 + 1] * 8) & 63);
+    let c = map.get(key);
+    if (c === undefined) { c = cn++; map.set(key, c); }
+    remap[i] = c;
+    cnt[c]++;
+    accP[c * 3] += x; accP[c * 3 + 1] += y; accP[c * 3 + 2] += z;
+    if (accN) { accN[c * 3] += N[i * 3]; accN[c * 3 + 1] += N[i * 3 + 1]; accN[c * 3 + 2] += N[i * 3 + 2]; }
+    if (accUV) { accUV[c * 2] += UV[i * 2]; accUV[c * 2 + 1] += UV[i * 2 + 1]; }
+    if (accC) for (let k = 0; k < cs; k++) accC[c * cs + k] += C[i * cs + k];
+  }
+  const outP = new Float32Array(cn * 3);
+  const outN = accN ? new Float32Array(cn * 3) : null;
+  const outUV = accUV ? new Float32Array(cn * 2) : null;
+  const outC = accC ? new Float32Array(cn * cs) : null;
+  for (let c = 0; c < cn; c++) {
+    const k = 1 / cnt[c];
+    outP[c * 3] = accP[c * 3] * k; outP[c * 3 + 1] = accP[c * 3 + 1] * k; outP[c * 3 + 2] = accP[c * 3 + 2] * k;
+    if (outN) {
+      const nx = accN[c * 3], ny = accN[c * 3 + 1], nz = accN[c * 3 + 2];
+      const l = Math.hypot(nx, ny, nz) || 1;
+      outN[c * 3] = nx / l; outN[c * 3 + 1] = ny / l; outN[c * 3 + 2] = nz / l;
+    }
+    if (outUV) { outUV[c * 2] = accUV[c * 2] * k; outUV[c * 2 + 1] = accUV[c * 2 + 1] * k; }
+    if (outC) for (let j = 0; j < cs; j++) outC[c * cs + j] = accC[c * cs + j] * k;
+  }
+  const triN = idx ? idx.length / 3 : vn / 3;
+  const tmp = new Uint32Array(triN * 3);
+  let o = 0;
+  for (let t = 0; t < triN; t++) {
+    const a = remap[idx ? idx[t * 3] : t * 3];
+    const b = remap[idx ? idx[t * 3 + 1] : t * 3 + 1];
+    const c = remap[idx ? idx[t * 3 + 2] : t * 3 + 2];
+    if (a === b || b === c || a === c) continue;   // buzilgan (yo'qolgan) uchburchak
+    tmp[o++] = a; tmp[o++] = b; tmp[o++] = c;
+  }
+  return { P: outP, N: outN, UV: outUV, C: outC, cs, index: tmp.slice(0, o), tris: o / 3, verts: cn };
+}
+
+function attrToArray(attr, comps) {
+  const n = attr.count, out = new Float32Array(n * comps);
+  for (let i = 0; i < n; i++) {
+    out[i * comps] = attr.getX(i);
+    if (comps > 1) out[i * comps + 1] = attr.getY(i);
+    if (comps > 2) out[i * comps + 2] = attr.getZ(i);
+    if (comps > 3) out[i * comps + 3] = attr.getW(i);
+  }
+  return out;
+}
+
+function simplifyForLod(geo) {
+  const pos = geo.attributes.position;
+  if (!pos || pos.itemSize !== 3) return geo;
+  if (geo.groups && geo.groups.length > 1) return geo;
+  if (geo.attributes.skinIndex || (geo.morphAttributes && Object.keys(geo.morphAttributes).length)) return geo;
+  const tris = geo.index ? geo.index.count / 3 : pos.count / 3;
+  if (tris <= HOUSE_LOD.minTris) return geo;
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  const bb = geo.boundingBox;
+  const d = {
+    P: attrToArray(pos, 3),
+    N: geo.attributes.normal ? attrToArray(geo.attributes.normal, 3) : null,
+    UV: geo.attributes.uv ? attrToArray(geo.attributes.uv, 2) : null,
+    C: null, cs: 0,
+    idx: geo.index ? geo.index.array : null,
+    min: bb.min,
+    size: Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z),
+  };
+  if (geo.attributes.color) { d.cs = Math.min(4, geo.attributes.color.itemSize); d.C = attrToArray(geo.attributes.color, d.cs); }
+  const target = Math.max(600, tris * HOUSE_LOD.triRatio);
+  let grid = 128, r = null;
+  for (let k = 0; k < 6; k++) {
+    r = clusterGeometryData(d, grid);
+    if (r.tris <= target) break;
+    grid = Math.max(8, Math.round(grid * 0.7));
+  }
+  if (!r || r.tris < 4 || r.tris > tris * 0.85) return geo;   // deyarli kamaymadi yoki buzildi - asl geometriya qoladi
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(r.P, 3));
+  if (r.N) g.setAttribute('normal', new THREE.BufferAttribute(r.N, 3));
+  if (r.UV) g.setAttribute('uv', new THREE.BufferAttribute(r.UV, 2));
+  if (r.C) g.setAttribute('color', new THREE.BufferAttribute(r.C, r.cs));
+  g.setIndex(new THREE.BufferAttribute(r.verts < 65535 ? new Uint16Array(r.index) : r.index, 1));
+  g.boundingBox = geo.boundingBox.clone();
+  g.boundingSphere = geo.boundingSphere.clone();   // chetda ko'rinish/yo'qolish asl model bilan bir xil bo'lsin
+  return g;
+}
+
+// --- Teksturani kichraytirish (xiraroq, lekin rangi o'sha-o'sha) ---
+const lowTexCache = new Map();
+function lowTexture(tex) {
+  if (!tex || !tex.image || tex.isCompressedTexture || tex.isCubeTexture) return tex;
+  if (lowTexCache.has(tex)) return lowTexCache.get(tex);
+  let out = tex;
+  try {
+    const img = tex.image;
+    const w = img.width || img.videoWidth, h = img.height || img.videoHeight;
+    if (w && h && Math.max(w, h) > HOUSE_LOD.tex) {
+      const k = HOUSE_LOD.tex / Math.max(w, h);
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(w * k));
+      cv.height = Math.max(1, Math.round(h * k));
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      out = new THREE.CanvasTexture(cv);
+      out.colorSpace = tex.colorSpace;
+      out.flipY = tex.flipY;
+      out.wrapS = tex.wrapS; out.wrapT = tex.wrapT;
+      out.offset.copy(tex.offset); out.repeat.copy(tex.repeat);
+      out.center.copy(tex.center); out.rotation = tex.rotation;
+      out.channel = tex.channel;
+      out.anisotropy = 1;
+    }
+  } catch (e) { out = tex; }
+  lowTexCache.set(tex, out);
+  return out;
+}
+const lowMatCache = new Map();
+function lowMaterial(mat) {
+  if (Array.isArray(mat)) return mat.map(lowMaterial);
+  if (lowMatCache.has(mat)) return lowMatCache.get(mat);
+  const c = mat.clone();
+  for (const k of ['map', 'emissiveMap', 'alphaMap']) if (c[k]) c[k] = lowTexture(c[k]);
+  // Uzoqdan ko'rinmaydigan og'ir tekstura qatlamlari olib tashlanadi
+  for (const k of ['normalMap', 'aoMap', 'roughnessMap', 'metalnessMap', 'bumpMap']) if (c[k]) c[k] = null;
+  if (mat.roughnessMap) c.roughness = 0.8;
+  if (mat.metalnessMap) c.metalness = 0.1;
+  c.needsUpdate = true;
+  lowMatCache.set(mat, c);
+  return c;
+}
+function textureList(mat, into) {
+  for (const m of (Array.isArray(mat) ? mat : [mat])) {
+    for (const k of ['map', 'emissiveMap', 'alphaMap', 'normalMap', 'aoMap', 'roughnessMap', 'metalnessMap']) {
+      if (m && m[k] && !into.includes(m[k])) into.push(m[k]);
+    }
+  }
+}
+
+// "lo" variantlar asta-sekin (kadrlarni qotirmasdan) tayyorlanadi
+function pumpLodJobs() {
+  if (lodBusy) return;
+  lodBusy = true;
+  const step = () => {
+    const job = lodJobs.shift();
+    if (!job) { lodBusy = false; return; }
+    try { job(); } catch (e) { console.warn('Uy LOD tayyorlanmadi:', e); }
+    setTimeout(step, 24);
+  };
+  setTimeout(step, 60);
+}
+
 function addGlbHouses(file, list, res) {
   const house = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -257,24 +445,116 @@ function addGlbHouses(file, list, res) {
     c.reach2 = reach * reach;
     c.top = (o.y || 0) + res.h * o.s;
   });
-  res.root.traverse((m) => {
-    if (!m.isMesh) return;
-    const mesh = new THREE.InstancedMesh(m.geometry, m.material, list.length);
-    list.forEach((o, i) => {
-      q.setFromAxisAngle(up, o.r);
-      pos.set(o.x, o.y || 0, o.z);
-      scl.setScalar(o.s);
-      house.compose(pos, q, scl).multiply(m.matrixWorld);   // uy joyi * modeldagi shu bo'lakning joyi
-      mesh.setMatrixAt(i, house);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    // Kamera ko'rmayotgan uy chizilmasin (oldin frustumCulled = false edi - har kadr hamma uy chizilardi)
-    if (mesh.computeBoundingSphere) { mesh.computeBoundingSphere(); mesh.frustumCulled = true; }
-    else mesh.frustumCulled = false;   // eski three versiyasi - xavfsiz variant
-    mesh.castShadow = shadowsOn;
-    mesh.receiveShadow = false;        // GLB uy soya qabul qilmaydi (yengilroq)
-    scene.add(mesh);
+
+  const parts = [];
+  res.root.traverse((m) => { if (m.isMesh) parts.push(m); });
+
+  // Har bir uy uchun: modeldagi har bir bo'lakning "hi" nusxasi (asl geometriya va material)
+  const entries = list.map((o) => {
+    q.setFromAxisAngle(up, o.r);
+    pos.set(o.x, o.y || 0, o.z);
+    scl.setScalar(o.s);
+    const e = {
+      x: o.x, z: o.z, radius: Math.hypot(res.w, res.d) * o.s,
+      hi: [], lo: [], mats: [], loDone: false, mode: -1, shadow: false, warmed: false, warmNow: false,
+      matrices: [],
+    };
+    for (const m of parts) {
+      const mat4 = new THREE.Matrix4().compose(pos, q, scl).multiply(m.matrixWorld);   // uy joyi * modeldagi shu bo'lakning joyi
+      e.matrices.push(mat4);
+      const mesh = new THREE.Mesh(m.geometry, m.material);
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(mat4);
+      mesh.matrixWorldNeedsUpdate = true;
+      mesh.castShadow = false;           // soya uyga yaqinlashganda yoqiladi (updateHouseLods)
+      mesh.receiveShadow = false;        // GLB uy soya qabul qilmaydi (yengilroq)
+      mesh.visible = false;              // birinchi updateHouseLods o'zi to'g'ri variantni ko'rsatadi
+      scene.add(mesh);
+      e.hi.push(mesh);
+      textureList(m.material, e.mats);
+    }
+    houseLods.push(e);
+    return e;
   });
+  if (!parts.length) return;
+
+  // "lo" variantlar: har bir bo'lak uchun bitta ish (bir marta soddalashtirib, hamma uylar bo'lishadi)
+  parts.forEach((m, pi) => {
+    lodJobs.push(() => {
+      const lowGeo = simplifyForLod(m.geometry);
+      const lowMat = lowMaterial(m.material);
+      for (const e of entries) {
+        const mesh = new THREE.Mesh(lowGeo, lowMat);
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.copy(e.matrices[pi]);
+        mesh.matrixWorldNeedsUpdate = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        mesh.visible = false;
+        scene.add(mesh);
+        e.lo[pi] = mesh;
+        // kichik tekstura va geometriya hozirdanoq GPU'ga yuklanadi - uzoqdan birinchi ko'ringanda qotmaydi
+        if (renderer.initTexture) {
+          for (const mm of (Array.isArray(lowMat) ? lowMat : [lowMat])) {
+            for (const k of ['map', 'emissiveMap', 'alphaMap']) if (mm[k]) renderer.initTexture(mm[k]);
+          }
+        }
+        if (pi === parts.length - 1) e.loDone = true;
+      }
+    });
+  });
+  pumpLodJobs();
+}
+
+// Uylarning LOD holatini yangilaydi (0.2 soniyada bir marta). mode: 0 - chizilmaydi, 1 - to'liq sifat, 2 - xiraroq.
+// Katta uyni oldindan GPU'ga yuklash ("warm") har yangilanishda faqat BITTA uy uchun qilinadi - qotish bo'lmasin.
+let houseLodTimer = 0;
+const warmTextures = [];
+function updateHouseLods(dt) {
+  // Oldindan yuklash navbati: har kadrda bitta tekstura
+  if (warmTextures.length && renderer.initTexture) {
+    try { renderer.initTexture(warmTextures.shift()); } catch (e) { /* tekstura yaroqsiz bo'lsa o'tkazib yuboramiz */ }
+  }
+  houseLodTimer -= dt;
+  if (houseLodTimer > 0) return;
+  houseLodTimer = 0.2;
+  const cull = (scene.fog ? scene.fog.far : 340) + 40;   // tuman ortidagi uy baribir ko'rinmaydi
+  const cx = camera.position.x, cz = camera.position.z;
+  let warmedThisTick = false;
+  for (const e of houseLods) {
+    const d = Math.max(0, Math.hypot(e.x - cx, e.z - cz) - e.radius);
+    let mode;
+    if (d > cull) mode = 0;
+    else if (!e.loDone) mode = 1;                                   // xira variant hali tayyor emas - asl model
+    else if (e.mode === 2) mode = d < HOUSE_LOD.back ? 1 : 2;
+    else mode = d > HOUSE_LOD.near ? 2 : 1;
+
+    // Yaqinlashayotgan uyning og'ir qismlarini oldindan GPU'ga yuklash (bir tikda bittasi)
+    if (e.warmNow) {   // o'tgan tikda bir kadrga ko'rsatilgan edi - endi oddiy holatga qaytaramiz
+      e.warmNow = false;
+      for (const m of e.hi) m.frustumCulled = true;
+      e.mode = -1;
+    }
+    if (!e.warmed && !warmedThisTick && d < HOUSE_LOD.warm && e.loDone) {
+      e.warmed = true;
+      warmedThisTick = true;
+      for (const t of e.mats) warmTextures.push(t);
+      if (mode === 2) {   // geometriya ham yuklanishi uchun "hi" bir tik ko'rsatiladi (kamera ortida bo'lsa ham chiziladi)
+        e.warmNow = true;
+        for (const m of e.hi) { m.frustumCulled = false; m.visible = true; }
+        for (const m of e.lo) if (m) m.visible = false;
+        continue;
+      }
+    }
+
+    if (mode !== e.mode) {
+      e.mode = mode;
+      for (const m of e.hi) m.visible = mode === 1;
+      for (const m of e.lo) if (m) m.visible = mode === 2;
+    }
+    const sh = shadowsOn && mode === 1 && d < HOUSE_LOD.shadow;
+    if (sh !== e.shadow) { e.shadow = sh; for (const m of e.hi) m.castShadow = sh; }
+  }
 }
 function addGlbFallback(list) {
   const mat = getMaterial('house', 0);
@@ -1510,6 +1790,7 @@ function frame(now) {
     if (tx * tx + tz * tz < 250 * 250) updateTrafficLightGroup(tl.group, tl.data, now / 1000);
   }
   updateWorldChunks(dt);
+  updateHouseLods(dt);
 
   if (!paused) {
     updateWheel(dt);
