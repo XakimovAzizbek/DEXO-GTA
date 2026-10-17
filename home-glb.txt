@@ -18,3 +18,7 @@ name: uy17 glb: beautiful_house-draco.glb
 name: uy18 glb: w2w_building_135o_degree_german_style-draco.glb
 name: uy19 glb: q7_l9.glb
 name: uy20 glb: free_lowpoly_3d_models_house.glb
+name: uy21 glb: building.glb
+name: uy22 glb: building1.glb
+name: uy23 glb: building3-draco.glb
+name: uy24 glb: residential_building.glb
