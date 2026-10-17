@@ -1,3 +1,10 @@
+name: tesla cybertruck
+car: tesla_cybertruck-draco.glb
+length: 10.1
+camheight: 5.3
+aimy: 1.6
+fovspeed: 0.05
+
 name: toyota supra mk5
 car: custom_toyota_supra_mk5-draco.glb
 length: 9.3
