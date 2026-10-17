@@ -3,6 +3,7 @@ car: custom_toyota_supra_mk5-draco.glb
 length: 9.3
 camheight: 4.5
 aimy: 2.8
+light: shape=ring func=brake color=#ff2a2a x=0.66 y=0.84 z=-2.34 size=1 mirror=1
 
 name: 2015 cadillac escalade
 car: 2015_cadillac_escalade_esv.glb
