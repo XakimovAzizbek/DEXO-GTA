@@ -2,6 +2,7 @@ name: Airplane
 airplane: airport_airplane_2.glb
 length: 40
 rotate: 180
+speed: 1.6
 
 name: Helicopter
 helicopter: helicopter.glb
@@ -27,3 +28,8 @@ speed: 3
 name: AIRPLANE
 airplane: airplane2-v1.glb
 length: 60
+speed: 1.6
+
+name: KC-390 AIRPLANE
+airplane: embraer_kc-390_millennium.glb
+length: 23
