@@ -713,7 +713,7 @@ function buildPlane() {
 let fleet = null;
 let botCfg = null;
 
-async function setupBots(setText) {
+async function setupBots() {
   if (!routes.length) return;
   botCfg = await fetchBotConfig();
   if (!botCfg.count) return;
@@ -727,9 +727,8 @@ async function setupBots(setText) {
 
   if (!botCars.length) return;
 
-  setText(`Botlar yuklanmoqda (${botCfg.count} ta, ${botCars.length} xil model)…`);
   fleet = await createBotFleet(scene, botCars, Math.min(botCfg.count, 400));
-  if (!fleet) { setText('Bot modellari yuklanmadi'); return; }
+  if (!fleet) { console.warn('Bot modellari yuklanmadi'); return; }
 
   const perRoute = routes.map(() => []);
   for (let i = 0; i < botCfg.count; i++) perRoute[i % routes.length].push(i);
@@ -747,7 +746,6 @@ async function setupBots(setText) {
       }
     });
   });
-  setText(`Botlar tayyor: ${fleet.bots.length} (${fleet.modelCount} xil model)`);
 }
 
 function updateBots(dt) {
@@ -916,7 +914,7 @@ function setVehicle(mode) {
   }
 }
 
-async function setupCar(setText, setProgress) {
+async function setupCar(setProgress) {
   const cars = await fetchCarList();
   const wanted = loadSelectedCarName();
   let entry = cars.find((c) => c.name === wanted) || cars[0] || null;
@@ -927,7 +925,6 @@ async function setupCar(setText, setProgress) {
     carGroup.add(carLights.group);
     lightBtn.hidden = !carLights.hasButton;
     lightBtn.classList.toggle('is-on', lightsOn);
-    setText(`Mashina yuklanmoqda: ${entry.name}…`);
     try {
       const built = await loadCarModel(entry, setProgress);
       built.group.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
@@ -938,8 +935,6 @@ async function setupCar(setText, setProgress) {
       return;
     } catch (err) {
       console.warn('Mashina modeli yuklanmadi:', err);
-      setText('Mashina fayli topilmadi. Oddiy mashina bilan davom etamiz.');
-      await new Promise((r) => setTimeout(r, 1500));
     }
   }
   useFallbackCar();
@@ -947,7 +942,7 @@ async function setupCar(setText, setProgress) {
 
 // Airport.txt dagi tanlangan (yoki mos turdagi birinchi) samolyot/vertolyotni GLB sifatida yuklaydi.
 // Muvaffaqiyatsiz bo'lsa, kod bilan yasalgan oddiy model (heliBuilt/planeBuilt) ko'rinishda qoladi.
-async function setupAirport(setText, setProgress) {
+async function setupAirport(setProgress) {
   const list = await fetchAirportList();
   if (!list.length) return;
   const wanted = loadSelectedAirportName();
@@ -960,15 +955,17 @@ async function setupAirport(setText, setProgress) {
     ['helicopter', 'heli', heliGroup, heliBuilt],
     ['airplane', 'plane', planeGroup, planeBuilt],
   ];
-  for (const [kind, mode, group, fallback] of jobs) {
+  const prog = { heli: 0, plane: 0 };
+  const report = () => { if (setProgress) setProgress((prog.heli + prog.plane) / 2); };
+  // Vertolyot va samolyot bir vaqtda (parallel) yuklanadi
+  await Promise.all(jobs.map(async ([kind, mode, group, fallback]) => {
     const entry = byKind[kind];
-    if (!entry) continue;
+    if (!entry) { prog[mode] = 1; report(); return; }
     const draft = useDraft ? loadAirportDraft(entry.name) : {};
     const profile = { ...AIRPORT_DEFAULTS, ...entry, ...draft };
     airportProfiles[mode] = profile;
-    setText(`${VEHICLE_LABEL[mode]} yuklanmoqda: ${entry.name}…`);
     try {
-      const model = await loadAirportModel(profile, setProgress);
+      const model = await loadAirportModel(profile, (p) => { prog[mode] = Math.max(prog[mode], p); report(); });
       model.traverse((o) => { if (o.isMesh) o.castShadow = shadowsOn; });
       group.add(model);
       airRoots[mode] = model;
@@ -985,7 +982,8 @@ async function setupAirport(setText, setProgress) {
     } catch (err) {
       console.warn(`${VEHICLE_LABEL[mode]} modeli yuklanmadi:`, err);
     }
-  }
+    prog[mode] = 1; report();
+  }));
 }
 
 // ---------- Havo harakati: qo'lda chizilgan yo'llar bo'ylab uchadigan AI samolyot/vertolyotlar ----------
@@ -1043,22 +1041,25 @@ function makeAirModel(kind, modelName, combat = false) {
 }
 
 // Yo'llarda tanlangan modellarni (airport.txt) oldindan yuklaydi, keyin botlar yaratiladi.
-async function loadAirPathModels(list) {
+async function loadAirPathModels(list, setProgress) {
   const names = [...new Set(list.map((p) => p && p.model).filter((n) => typeof n === 'string' && n))];
   if (!names.length) return;
   const all = await fetchAirportList();
-  for (const name of names) {
+  let done = 0;
+  const tick = () => { done++; if (setProgress) setProgress(done / names.length); };
+  await Promise.all(names.map(async (name) => {
     const entry = all.find((a) => a.name === name);
-    if (!entry) continue;
+    if (!entry) { tick(); return; }
     airPathEntries.set(name, { ...AIRPORT_DEFAULTS, ...entry });
     const mode = entry.kind === 'helicopter' ? 'heli' : 'plane';
-    if (airportProfiles[mode].name === name && airRoots[mode]) { airPathModels.set(name, airRoots[mode]); continue; }   // o'yinchi modeli bilan bir xil
+    if (airportProfiles[mode].name === name && airRoots[mode]) { airPathModels.set(name, airRoots[mode]); tick(); return; }   // o'yinchi modeli bilan bir xil
     try {
       airPathModels.set(name, await loadAirportModel({ ...AIRPORT_DEFAULTS, ...entry }));
     } catch (err) {
       console.warn(`Havo yo‘li modeli yuklanmadi: ${name}`, err);
     }
-  }
+    tick();
+  }));
 }
 
 // Jangovor havo boti raketa uchirdi: o'yinchinikidek raketa (mine: false - mening ulovimga tegsa pachoqlaydi).
@@ -1073,10 +1074,10 @@ function botFireRocket(sp) {
   playRocketLaunchSound(dist, ((dx * rx + dz * rz) / Math.max(dist, 1)) * 0.75);
 }
 
-async function setupAirTraffic() {
+async function setupAirTraffic(setProgress) {
   const list = Array.isArray(zone.air) ? zone.air.slice(0, AIR_MAX_PATHS) : [];
   if (!list.length) return;
-  await loadAirPathModels(list);
+  await loadAirPathModels(list, setProgress);
   airFleet = createAirFleet({
     scene, makeModel: makeAirModel, obstacles: { cols: colliders, ramps }, maxBots: AIR_BOT_LIMIT,
     makeVoice: createRemoteVoice, hearRange: REMOTE_HEAR_RANGE,   // AI samolyot/vertolyot ovozi (masofaga qarab baland/past)
@@ -2958,37 +2959,50 @@ export function stopMultiplayer() {
 }
 
 // ---------- Ishga tushirish ----------
+// Yuklash ekrani: faqat foiz (%) ko'rsatiladi. Hamma narsa (mashina, samolyot/vertolyot, havo yo'llari,
+// botlar, reklama, shahar) BIR VAQTDA (parallel) yuklanadi - shuning uchun o'yin ancha tez ochiladi.
 async function start() {
   const loadingText = $('loadingText'), bar = $('loadingBar');
-  await setupCar(
-    (text) => { loadingText.textContent = text; },
-    (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
-  );
-  await setupAirport(
-    (text) => { loadingText.textContent = text; },
-    (p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; },
-  );
-  respawn();
-  loadingText.textContent = 'Havo harakati yuklanmoqda…';
-  await setupAirTraffic();
-  await setupBots((text) => { loadingText.textContent = text; });
-  setupBillboards(await fetchBillboardList());
+  const tasks = [];
+  let shownPct = -1;
+  const render = () => {
+    let sum = 0, wsum = 0;
+    for (const t of tasks) { sum += t.w * t.p; wsum += t.w; }
+    const pct = Math.min(100, Math.floor(wsum ? (sum / wsum) * 100 : 0));
+    if (pct <= shownPct) return;   // foiz hech qachon orqaga qaytmaydi
+    shownPct = pct;
+    if (loadingText) loadingText.textContent = `${pct}%`;
+    if (bar) bar.style.width = `${pct}%`;
+  };
+  // Har bir yuklash vazifasi o'z ulushi (w) bilan qo'shiladi; qaytgan funksiya 0..1 oraliqda progress qabul qiladi.
+  const addTask = (w) => {
+    const t = { w, p: 0 };
+    tasks.push(t);
+    return (p) => { t.p = Math.max(t.p, Math.min(1, p)); render(); };
+  };
+  const pCar = addTask(15), pAir = addTask(20), pPaths = addTask(10), pBots = addTask(15), pAds = addTask(5);
+  const pCity = settings.useCityModel ? addTask(35) : null;
+  render();
 
-  if (settings.useCityModel) {
-    loadingText.textContent = 'Shahar modeli yuklanmoqda (90 MB)…';
-    try {
-      const city = await loadCity((p) => { bar.style.width = `${Math.round(8 + p * 92)}%`; });
-      scene.add(city);
-    } catch (err) {
-      console.warn('Shahar modeli yuklanmadi:', err);
-      loadingText.textContent = 'Shahar modeli topilmadi (assets/procedural_city_6.glb). Zona bilan davom etamiz.';
-      await new Promise((r) => setTimeout(r, 1800));
-    }
-  }
+  // Mashina va samolyot/vertolyot tayyor bo'lgach - o'yinchi joylashadi
+  const carP = setupCar(pCar).finally(() => pCar(1));
+  const airP = setupAirport(pAir).finally(() => pAir(1));
+  const vehiclesP = Promise.all([carP, airP]).then(() => respawn());
+  // Havo yo'llari samolyot/vertolyot modellari tayyor bo'lgach boshlanadi (bir xil GLB ikki marta yuklanmasligi uchun)
+  const pathsP = airP.then(() => setupAirTraffic(pPaths)).catch((e) => console.warn('Havo harakati yuklanmadi:', e)).finally(() => pPaths(1));
+  const botsP = setupBots().catch((e) => console.warn('Botlar yuklanmadi:', e)).finally(() => pBots(1));
+  const adsP = fetchBillboardList().then((ads) => setupBillboards(ads)).catch((e) => console.warn('Reklamalar yuklanmadi:', e)).finally(() => pAds(1));
+  const cityP = pCity
+    ? loadCity(pCity).then((city) => { scene.add(city); }).catch((err) => { console.warn('Shahar modeli yuklanmadi:', err); }).finally(() => pCity(1))
+    : Promise.resolve();
+
+  await Promise.all([vehiclesP, pathsP, botsP, adsP, cityP]);
+
   // Mashinani pachoqlashga oldindan tayyorlaymiz (yuklash ekranida) - urilganda o'yin qotib qolmasligi uchun
   { const r = localRoot('car'); if (r) warmCrashModel(r); }
-  bar.style.width = '100%';
+  for (const t of tasks) t.p = 1;
+  render();
   renderer.setAnimationLoop(frame);
-  setTimeout(() => { $('loading').hidden = true; }, 250);
+  $('loading').hidden = true;
 }
 start();
