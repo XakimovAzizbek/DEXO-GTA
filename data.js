@@ -528,10 +528,11 @@ export const DEFAULT_BOT_CFG = {
   speedKmh: 60,
   patience: 20,
   razgon: true,
+  route: 'avto',
   bans: new Set(),
 };
 export async function fetchBotConfig() {
-  const cfg = { count: 0, speedKmh: 60, patience: 20, razgon: true, bans: new Set() };
+  const cfg = { count: 0, speedKmh: 60, patience: 20, razgon: true, route: 'avto', bans: new Set() };
   try {
     const res = await fetch('bot-car.txt', { cache: 'no-store' });
     if (!res.ok) return cfg;
@@ -546,6 +547,7 @@ export async function fetchBotConfig() {
       else if (key === 'tezlik') cfg.speedKmh = Math.max(20, Math.min(120, Number(val) || 60));
       else if (key === 'sabr') cfg.patience = Math.max(5, Math.min(60, Number(val) || 20));
       else if (key === 'razgon') cfg.razgon = ON_VALUES.has(val.toLowerCase());
+      else if (key === 'marshrut') cfg.route = ['avto', 'yol', 'qolda'].includes(val.toLowerCase()) ? val.toLowerCase() : 'avto';   // avto: qo'lda nuqta bo'lsa o'sha, bo'lmasa yo'llardan; yol: doim yo'llardan; qolda: faqat nuqtalardan
       else if (key === 'bot_ban') cfg.bans.add(val.toLowerCase());
     }
   } catch { /* fayl yo'q */ }
@@ -581,6 +583,147 @@ export function buildRoutes(objects) {
     }
     if (segs.length < 3) continue;
     routes.push({ c, points: pts, segs, total });
+  }
+  return routes;
+}
+
+// ---------- Avtomatik marshrut: editorda qo'yilgan YO'LLARDAN (marshrut nuqtasi kerak emas) ----------
+// road_straight (burilgani ham) va road_cross dan graf quriladi. Bot chorrahada to'g'ri/o'ngga/chapga tasodifiy buriladi,
+// oxirida esa o'ziga qaytib keluvchi yopiq halqa bo'ladi (tupik bo'lsa, u yerda burilib qaytadi).
+function _routeFromPoints(c, pts) {
+  const segs = [];
+  let total = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.001) continue;
+    segs.push({ a, b, dx, dz, len, dirx: dx / len, dirz: dz / len });
+    total += len;
+  }
+  return segs.length >= 3 ? { c, points: pts, segs, total } : null;
+}
+
+export function buildAutoRoutes(objects, maxRoutes = 8) {
+  const SNAP = 3;   // shu masofadagi yo'l uchlari bitta tugun deb hisoblanadi
+  const nodes = [];
+  const nodeAt = (x, z) => {
+    for (let i = 0; i < nodes.length; i++) if (Math.hypot(nodes[i].x - x, nodes[i].z - z) < SNAP) return i;
+    nodes.push({ x, z });
+    return nodes.length - 1;
+  };
+  const edges = [];  // yo'nalishli qirralar: {from, to, pts, rev}
+  const addEdge = (pts) => {
+    if (pts.length < 2) return;
+    const a = nodeAt(pts[0].x, pts[0].z), b = nodeAt(pts[pts.length - 1].x, pts[pts.length - 1].z);
+    if (a === b) return;
+    const i = edges.length;
+    edges.push({ from: a, to: b, pts, rev: i + 1 });
+    edges.push({ from: b, to: a, pts: pts.slice().reverse(), rev: i });
+  };
+
+  // Burilgan yo'l markaziy chizig'i (models.js dagi bendPoints bilan bir xil)
+  const N = 6;
+  const crosses = [];
+  for (const o of objects) {
+    const def = CATALOG[o.t];
+    if (!def) continue;
+    const s = o.s || 1;
+    if (o.t === 'road_straight') {
+      const hd = def.hd * s, bend = o.bend || 0;
+      const dYaw = (BEND_ANGLE * bend) / N, dL = (2 * hd) / N;
+      let lx = 0, lz = -hd, yaw = 0;
+      const local = [{ x: lx, z: lz }];
+      for (let i = 0; i < N; i++) {
+        const mid = yaw + dYaw / 2;
+        lx += Math.sin(mid) * dL; lz += Math.cos(mid) * dL; yaw += dYaw;
+        local.push({ x: lx, z: lz });
+      }
+      const cs = Math.cos(o.r), sn = Math.sin(o.r);
+      addEdge(local.map((p) => ({ x: o.x + p.x * cs + p.z * sn, z: o.z - p.x * sn + p.z * cs })));
+    } else if (o.t === 'road_cross') {
+      crosses.push({ x: o.x, z: o.z, reach: def.hd * s + SNAP + 1 });
+    }
+  }
+  // Chorraha: unga yetib kelgan yo'l uchlarini markaz bilan tutashtiramiz
+  const ends = nodes.map((n) => ({ x: n.x, z: n.z }));
+  for (const cr of crosses) {
+    for (const e of ends) {
+      if (Math.hypot(e.x - cr.x, e.z - cr.z) < cr.reach) addEdge([{ x: e.x, z: e.z }, { x: cr.x, z: cr.z }]);
+    }
+  }
+  if (edges.length < 2) return [];
+
+  const out = nodes.map(() => []);
+  edges.forEach((e, i) => out[e.from].push(i));
+  const tangentIn = (e) => { const p = e.pts, a = p[p.length - 2], b = p[p.length - 1]; const l = Math.hypot(b.x - a.x, b.z - a.z) || 1; return { x: (b.x - a.x) / l, z: (b.z - a.z) / l }; };
+  const tangentOut = (e) => { const a = e.pts[0], b = e.pts[1]; const l = Math.hypot(b.x - a.x, b.z - a.z) || 1; return { x: (b.x - a.x) / l, z: (b.z - a.z) / l }; };
+  // Qirradan keyin borish mumkin bo'lgan qirralar (orqaga qaytish faqat tupikda)
+  const succ = edges.map((e) => {
+    const list = out[e.to].filter((j) => j !== e.rev);
+    return list.length ? list : [e.rev];
+  });
+
+  // Tasodifiy, lekin har safar bir xil natija (seed)
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+  const used = new Array(edges.length).fill(0);
+  const routes = [];
+  const wantRoutes = Math.max(2, Math.min(maxRoutes, Math.ceil(edges.length / 8)));
+  const WALK = 14;   // har marshrut taxminan shuncha qirradan iborat (keyin yopiladi)
+
+  for (let r = 0; r < wantRoutes * 3 && routes.length < wantRoutes; r++) {
+    // eng kam ishlatilgan qirradan boshlaymiz: hamma yo'l qoplansin
+    let start = 0;
+    for (let i = 1; i < edges.length; i++) if (used[i] < used[start]) start = i;
+    const seq = [start];
+    let cur = start;
+    for (let k = 0; k < WALK; k++) {
+      const opts = succ[cur];
+      if (opts.length === 1) cur = opts[0];
+      else {
+        const t = tangentIn(edges[cur]);
+        const scored = opts.map((j) => { const u = tangentOut(edges[j]); return { j, w: (0.25 + Math.max(0, t.x * u.x + t.z * u.z)) / (1 + used[j]) }; });
+        let sum = 0; for (const s of scored) sum += s.w;
+        let pick = rnd() * sum, chosen = scored[0].j;
+        for (const s of scored) { pick -= s.w; if (pick <= 0) { chosen = s.j; break; } }
+        cur = chosen;
+      }
+      seq.push(cur);
+    }
+    // Boshiga qaytish: eng qisqa yo'l (BFS)
+    if (cur !== start) {
+      const prev = new Map([[cur, null]]);
+      const queue = [cur];
+      let found = false;
+      for (let qi = 0; qi < queue.length && !found; qi++) {
+        for (const j of succ[queue[qi]]) {
+          if (prev.has(j)) continue;
+          prev.set(j, queue[qi]);
+          if (j === start) { found = true; break; }
+          queue.push(j);
+        }
+      }
+      if (!found) continue;
+      const back = [];
+      for (let e = prev.get(start); e !== null && e !== cur; e = prev.get(e)) back.push(e);
+      back.reverse();
+      seq.push(...back);
+    } else seq.pop();   // start ga o'zi qaytib kelgan
+    // (BFS "start" ni qo'shmaydi: u halqa boshi bo'lib qoladi)
+
+    const pts = [];
+    for (const ei of seq) {
+      used[ei]++;
+      const p = edges[ei].pts;
+      for (let i = 0; i < p.length - 1; i++) {   // qirraning oxirgi nuqtasi keyingining boshi
+        const q = p[i], last = pts[pts.length - 1];
+        if (!last || Math.hypot(last.x - q.x, last.z - q.z) > 0.01) pts.push({ x: q.x, z: q.z });
+      }
+    }
+    const route = _routeFromPoints(1000 + routes.length, pts);
+    if (route && route.total > 40) routes.push(route);
   }
   return routes;
 }

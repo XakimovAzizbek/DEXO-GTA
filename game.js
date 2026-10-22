@@ -4,7 +4,7 @@ import {
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
   CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
   makeRamp, groundHeightAt, rampSurfaceNear,
-  buildRoutes, pointOnRoute, LANE_OFFSET, stepBot, fetchBotConfig,
+  buildRoutes, buildAutoRoutes, pointOnRoute, LANE_OFFSET, stepBot, fetchBotConfig,
   fetchAirportList, loadSelectedAirportName, AIRPORT_DEFAULTS, loadAirportDraft,
 } from './data.js';
 import {
@@ -587,7 +587,8 @@ function addGlbFallback(list) {
   }
 }
 const ramps = objects.map(makeRamp).filter(Boolean);
-const routes = buildRoutes(objects);
+const manualRoutes = buildRoutes(objects);   // qo'lda qo'yilgan marshrut nuqtalari (eski usul, hali ishlaydi)
+let routes = manualRoutes;
 
 // ---------- Mashina modeli ----------
 function buildCar() {
@@ -714,9 +715,13 @@ let fleet = null;
 let botCfg = null;
 
 async function setupBots() {
-  if (!routes.length) return;
   botCfg = await fetchBotConfig();
   if (!botCfg.count) return;
+  // marshrut: bot-car.txt dagi "marshrut: avto | yol | qolda"
+  if (botCfg.route === 'yol') routes = buildAutoRoutes(objects);
+  else if (botCfg.route === 'avto') routes = manualRoutes.length ? manualRoutes : buildAutoRoutes(objects);
+  else routes = manualRoutes;
+  if (!routes.length) { console.warn('Bot uchun yo‘l topilmadi'); return; }
 
   const cars = await fetchCarList();
   const botCars = cars
