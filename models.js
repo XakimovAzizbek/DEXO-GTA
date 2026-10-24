@@ -610,6 +610,12 @@ async function makeGLTFLoader() {
 // car = car.txt dagi yozuv (name, file, rotate, length, lift ...). Fayl avval cars/ papkasidan, keyin asosiy papkadan qidiriladi.
 // GLB sahnasini yuklaydi (hali o'lchamlanmagan).
 export async function loadCarScene(car, onProgress) {
+  // JSON mashina (car.txt da "car: mashina.json"): GLB kerak emas. Avval cars/ papkasidan, keyin boshqa joylardan qidiriladi.
+  // Gildiraklar "wheel_front_left" kabi guruh nomlari bilan keladi - fitCarModel ularni avtomatik topib, aylantiradi.
+  if (/\.json$/i.test(String(car.file || ''))) {
+    try { return await loadAirportJsonScene({ ...car, file: `cars/${car.file}` }, onProgress); }
+    catch (err) { return loadAirportJsonScene(car, onProgress); }
+  }
   const loader = await makeGLTFLoader();
   const gltf = await loadGLTFCached(loader, [`cars/${car.file}`, car.file], onProgress);
 
@@ -720,9 +726,129 @@ export async function loadCarModel(car, onProgress) {
   return { group: root, wheels: root.userData.wheels, frontPivots: root.userData.frontPivots };
 }
 
-// airport.txt yozuvi (name, file, kind, length, rotate, lift ...) uchun GLB yuklaydi.
+// airport.txt yozuvi (name, file, kind, length, rotate, lift ...) uchun model yuklaydi: .json bo'lsa JSON model, aks holda GLB.
 // Fayl avval airport/ , keyin cars/ , keyin asosiy papkadan qidiriladi.
+// ---------- JSON samolyot/vertolyot (airport.txt da "helicopter: helicopter.json" / "airplane: samolyot.json") ----------
+// Format uy JSON bilan bir xil (parts: box, cyl, cone, sphere, hip, gable, mesh), qo'shimcha:
+//   "groups": { "propellar": { "p": [x, y, z], "axis": "y" }, "backrotor": { "p": [x, y, z], "axis": "x" } }
+//   va qismda "g": "propellar" - shu guruhdagi qismlar alohida tugunga (nomi = guruh nomi) yig'iladi va o'yinda
+//   o'z o'qi (p - aylanish markazi, axis - o'q: x, y yoki z) atrofida AYLANADI. Nomida rotor / propellar / propeller /
+//   blade / prop so'zi bo'lgan guruhlarni o'yin parrak deb biladi. "g" siz qismlar qotib turadigan kuzovga yig'iladi.
+// o'lchamlar METRDA, burni +z ga qaragan; uzunlik, burish va balandlikni airport.txt dagi sozlamalar o'zgartiradi (fitCarModel).
+function jsonPartGeos(P, out) {
+  const base = jsonPartGeometry(P);
+  if (!base) return;
+  base.deleteAttribute('uv');
+  const mtx = new THREE.Matrix4(), quat = new THREE.Quaternion(), eul = new THREE.Euler(0, 0, 0, 'YXZ'), one = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
+  const D2R = Math.PI / 180;
+  const p = jsonVec3(P.p, [0, 0, 0]);
+  const n = jsonVec3(P.rep && P.rep.n, [1, 1, 1]).map((v) => Math.max(1, Math.min(60, Math.round(v))));
+  const dd = jsonVec3(P.rep && P.rep.d, [0, 0, 0]);
+  eul.set(jsonNum(P.rx, 0) * D2R, jsonNum(P.ry, 0) * D2R, jsonNum(P.rz, 0) * D2R, 'YXZ');
+  quat.setFromEuler(eul);
+  const hex = typeof P.c === 'string' ? P.c : '#c8c8c8';
+  for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) for (let k = 0; k < n[2]; k++) {
+    if (out.length >= JSON_MAX_PARTS) break;
+    pos.set(p[0] + (i - (n[0] - 1) / 2) * dd[0], p[1] + (j - (n[1] - 1) / 2) * dd[1], p[2] + (k - (n[2] - 1) / 2) * dd[2]);
+    mtx.compose(pos, quat, one);
+    const g = base.clone().applyMatrix4(mtx);
+    out.push(g.attributes.color ? g : paint(g, hex));
+  }
+  base.dispose();
+}
+
+export function buildJsonAirScene(spec) {
+  const list = Array.isArray(spec) ? spec : (spec && Array.isArray(spec.parts) ? spec.parts : []);
+  if (!list.length) throw new Error('JSON modelda "parts" ro‘yxati bo‘sh');
+  const defs = spec && spec.groups && typeof spec.groups === 'object' ? spec.groups : {};
+  const buckets = new Map();   // '' = qotib turadigan kuzov; boshqa kalit = aylanadigan guruh
+  const glassBuckets = new Map();   // shaffoflik (0..1) -> qismlar: qismda "o": 0.25 bo'lsa shu qism yarim-shaffof (shisha) bo'ladi
+  for (const P of list) {
+    if (!P || typeof P !== 'object') continue;
+    const key = typeof P.g === 'string' ? P.g : '';
+    const op = jsonNum(P.o, 1);
+    if (!key && op < 1) {
+      const ok = Math.max(0.02, Math.min(0.98, Math.round(op * 100) / 100));
+      if (!glassBuckets.has(ok)) glassBuckets.set(ok, []);
+      jsonPartGeos(P, glassBuckets.get(ok));
+      continue;
+    }
+    if (!buckets.has(key)) buckets.set(key, []);
+    jsonPartGeos(P, buckets.get(key));
+  }
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });   // yupqa sirtlar ikki tomondan ko'rinadi (GLB dagidek)
+  const scene = new THREE.Group();
+  scene.name = 'air_json';
+  let total = 0;
+  let axisNo = 0;
+  for (const [key, geos] of buckets) {
+    if (!geos.length) continue;
+    total += geos.length;
+    const geo = mergeGeometries(geos, false);
+    if (!key) {
+      geo.computeBoundingBox(); geo.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = 'kuzov';
+      mesh.castShadow = true;
+      scene.add(mesh);
+      continue;
+    }
+    // Aylanadigan guruh: holder (p nuqtada, o'qni y ga keltiradigan burilish bilan) -> spin (nomi = guruh nomi, o'yin rotation.y ni aylantiradi) -> mesh
+    const def = defs[key] || {};
+    const p = jsonVec3(def.p, [0, 0, 0]);
+    const axis = String(def.axis || 'y').toLowerCase();
+    const holder = new THREE.Group();
+    holder.name = `ax${axisNo++}`;   // nomida rotor/prop yo'q: faqat spin tugun aylanadi
+    holder.position.set(p[0], p[1], p[2]);
+    holder.rotation.set(axis === 'z' ? Math.PI / 2 : 0, 0, axis === 'x' ? -Math.PI / 2 : 0);   // lokal Y -> dunyoviy X yoki Z
+    holder.updateMatrix();
+    geo.translate(-p[0], -p[1], -p[2]);
+    geo.applyMatrix4(new THREE.Matrix4().copy(holder.matrix).setPosition(0, 0, 0).invert());
+    geo.computeBoundingBox(); geo.computeBoundingSphere();
+    const spin = new THREE.Group();
+    spin.name = key;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.name = 'qism';
+    mesh.castShadow = true;
+    spin.add(mesh);
+    holder.add(spin);
+    scene.add(holder);
+  }
+  // Yarim-shaffof qismlar (shisha): kuzovdan keyin chiziladi, chuqurlikka yozmaydi - ichidagi narsalar ko'rinib turadi
+  for (const [op, geos] of glassBuckets) {
+    if (!geos.length) continue;
+    total += geos.length;
+    const geo = mergeGeometries(geos, false);
+    geo.computeBoundingBox(); geo.computeBoundingSphere();
+    const gm = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: op, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, gm);
+    mesh.name = 'shisha';
+    mesh.renderOrder = 2;
+    scene.add(mesh);
+  }
+  if (!total) throw new Error('JSON modelda yaroqli qism topilmadi');
+  return scene;
+}
+
+async function loadAirportJsonScene(entry, onProgress) {
+  const file = String(entry.file);
+  const names = file.includes('/') ? [file] : [`airport/${file}`, `cars/${file}`, file, `assets/${file}`, `models/${file}`];
+  let lastErr = null;
+  for (const path of names) {
+    try {
+      const r = await fetch(path, { cache: 'no-cache' });
+      if (!r.ok) throw new Error(`${path}: ${r.status}`);
+      const spec = JSON.parse(await r.text());
+      const scene = buildJsonAirScene(spec);
+      if (onProgress) onProgress(1);
+      return scene;
+    } catch (err) { lastErr = err; }
+  }
+  throw lastErr || new Error('JSON fayl topilmadi');
+}
+
 export async function loadAirportScene(entry, onProgress) {
+  if (/\.json$/i.test(String(entry.file || ''))) return loadAirportJsonScene(entry, onProgress);   // JSON model: GLB kerak emas
   const loader = await makeGLTFLoader();
   const gltf = await loadGLTFCached(loader, [`airport/${entry.file}`, `cars/${entry.file}`, entry.file], onProgress);
 
@@ -842,6 +968,9 @@ function houseFootprint(root, halfW, halfD, H) {
 //     { "t": "sphere", "p": [x, y, z], "r": radius, "s": [sx, sy, sz] (ixtiyoriy), "c": "#..." },
 //     { "t": "hip",    "p": [x, y, z], "s": [eni, balandligi, bo'yi], "c": "#..." },     // to'rt qiyali tom (piramida)
 //     { "t": "gable",  "p": [x, y, z], "s": [eni, balandligi, bo'yi], "c": "#..." }      // ikki qiyali tom (tizma z o'qi bo'ylab)
+//     { "t": "mesh",   "p": [x, y, z], "v": [x,y,z, x,y,z, ...], "f": [a,b,c, a,b,c, ...], "c": "#..." }   // haqiqiy uchburchaklar: v - uchlar (metrda), f - uchburchaklar (uchlarning tartib raqami)
+//        mesh uchun ixtiyoriy: "pal": ["#...", ...] + "fc": [har bir uchburchakning rang raqami] (bitta qismda ko'p rang),
+//        "ca": silliqlash burchagi (gradus, standart 40; 0 = qirrali), "g": guruh nomi (faqat samolyot/vertolyot JSON uchun)
 //   ],
 //   "hit": [[x, z, yarimEni, yarimBo'yi]]   // ixtiyoriy: to'qnashuv qutilari (bo'lmasa o'zi devorlardan hisoblanadi)
 // }
@@ -858,6 +987,66 @@ function gableGeometry(w, h, d) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
   g.computeVertexNormals();
+  return g;
+}
+
+// "mesh": tayyor uchburchaklardan geometriya (GLB dan o'tkazilgan modellar uchun).
+// Qirralar orasidagi burchak "ca" dan kichik bo'lsa sirt silliq (egri) ko'rinadi, katta bo'lsa qirrali qoladi.
+// "pal" + "fc" berilsa har bir uchburchak o'z rangida chiziladi (bu holda qismning "c" rangi ishlatilmaydi).
+function meshGeometry(P) {
+  const v = Array.isArray(P.v) ? P.v : [], f = Array.isArray(P.f) ? P.f : [];
+  const nv = Math.floor(v.length / 3);
+  const pal = Array.isArray(P.pal) && Array.isArray(P.fc) && P.pal.length ? P.pal.map((h) => { _color.set(typeof h === 'string' ? h : '#c8c8c8'); return [_color.r, _color.g, _color.b]; }) : null;
+  const tri = [], fcol = [];
+  for (let i = 0, k = 0; i + 2 < f.length; i += 3, k++) {
+    const a = f[i] | 0, b = f[i + 1] | 0, c = f[i + 2] | 0;
+    if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue;
+    tri.push(a, b, c);
+    if (pal) fcol.push(pal[(P.fc[k] | 0) % pal.length] || pal[0]);
+  }
+  const nt = tri.length / 3;
+  if (!nt) return null;
+  // Uchburchak normallari (uzunligi = yuzasiga proporsional) va har bir uchga tegishli uchburchaklar ro'yxati
+  const fn = new Float32Array(nt * 3);
+  const adj = new Array(nv);
+  for (let t = 0; t < nt; t++) {
+    const a = tri[t * 3] * 3, b = tri[t * 3 + 1] * 3, c = tri[t * 3 + 2] * 3;
+    const ux = v[b] - v[a], uy = v[b + 1] - v[a + 1], uz = v[b + 2] - v[a + 2];
+    const wx = v[c] - v[a], wy = v[c + 1] - v[a + 1], wz = v[c + 2] - v[a + 2];
+    fn[t * 3] = uy * wz - uz * wy; fn[t * 3 + 1] = uz * wx - ux * wz; fn[t * 3 + 2] = ux * wy - uy * wx;
+    for (let k = 0; k < 3; k++) { const vi = tri[t * 3 + k]; (adj[vi] || (adj[vi] = [])).push(t); }
+  }
+  const ca = jsonNum(P.ca, 40);
+  const cosT = Math.cos(Math.max(0, Math.min(180, ca)) * Math.PI / 180);
+  const smooth = ca > 0.5;
+  const pos = new Float32Array(nt * 9), nor = new Float32Array(nt * 9), col = pal ? new Float32Array(nt * 9) : null;
+  for (let t = 0; t < nt; t++) {
+    const tx = fn[t * 3], ty = fn[t * 3 + 1], tz = fn[t * 3 + 2];
+    const tl0 = Math.hypot(tx, ty, tz), tl = tl0 || 1;
+    for (let k = 0; k < 3; k++) {
+      const vi = tri[t * 3 + k], o = t * 9 + k * 3;
+      pos[o] = v[vi * 3]; pos[o + 1] = v[vi * 3 + 1]; pos[o + 2] = v[vi * 3 + 2];
+      let nx = tx / tl, ny = ty / tl, nz = tz / tl;
+      if (tl0 < 1e-12) { nx = 0; ny = 1; nz = 0; }   // yuzasi nolga teng uchburchak: normal yo'q, tepaga qaratamiz
+      else if (smooth) {
+        let sx = 0, sy = 0, sz = 0;
+        for (const u of adj[vi]) {
+          const ux = fn[u * 3], uy = fn[u * 3 + 1], uz = fn[u * 3 + 2];
+          const ul = Math.hypot(ux, uy, uz);
+          if (ul < 1e-12) continue;
+          if ((ux * tx + uy * ty + uz * tz) / (ul * tl) >= cosT) { sx += ux; sy += uy; sz += uz; }
+        }
+        const sl = Math.hypot(sx, sy, sz);
+        if (sl > 1e-12) { nx = sx / sl; ny = sy / sl; nz = sz / sl; }
+      }
+      nor[o] = nx; nor[o + 1] = ny; nor[o + 2] = nz;
+      if (col) { const c = fcol[t]; col[o] = c[0]; col[o + 1] = c[1]; col[o + 2] = c[2]; }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  if (col) g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return g;
 }
 
@@ -883,6 +1072,7 @@ function jsonPartGeometry(P) {
       return g;
     }
     case 'gable': return gableGeometry(Math.max(0.01, S[0]), Math.max(0.01, S[1]), Math.max(0.01, S[2]));
+    case 'mesh': return meshGeometry(P);
     default: return null;
   }
 }
@@ -913,7 +1103,7 @@ export function buildJsonHouse(spec) {
       const g = base.clone().applyMatrix4(mtx);
       g.computeBoundingBox();
       rects.push(g.boundingBox.clone());
-      geos.push(paint(g, hex));
+      geos.push(g.attributes.color ? g : paint(g, hex));   // mesh o'z ranglari bo'lsa (pal/fc) shu qoladi
     }
     base.dispose();
   }
@@ -954,7 +1144,8 @@ export function buildJsonHouse(spec) {
   }
   if (!boxes.length || boxes.length > 24) boxes = [{ x: 0, z: 0, hw: w, hd: d }];   // juda ko'p bo'lak: bitta umumiy quti
 
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const hasMesh = list.some((P) => P && String(P.t).toLowerCase() === 'mesh');   // mesh yupqa sirt: ikki tomonlama chiziladi (GLB dagidek)
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: hasMesh ? THREE.DoubleSide : THREE.FrontSide });
   const mesh = new THREE.Mesh(geo, mat);
   const root = new THREE.Group();
   root.add(mesh);
