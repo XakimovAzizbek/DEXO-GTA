@@ -210,7 +210,7 @@ fovspeed: 0.05
 follow: 20
 
 name: mercedes-benz g class amg g 63
-car: 2020_mercedes-benz_g-class_amg_g_63.glb
+car: 2020_mercedes-benz_g-class_amg_g_63.json
 length: 7
 camdist: 8
 camheight: 3.8
