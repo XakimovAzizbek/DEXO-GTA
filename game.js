@@ -3,13 +3,13 @@ import {
   CATALOG, HALF, ZONE_SIZE, loadSettings, saveSettings, loadZone, defaultZone, normalizeObject,
   makeCollider, collideCircle, fetchSharedZone, fetchCarList, loadSelectedCarName,
   CAR_DEFAULTS, cameraPose, loadCarDraft, BILLBOARD_SCREEN, fetchBillboardList, normalizeBounds, fetchWeather,
-  makeRamp, groundHeightAt, rampSurfaceNear,
+  makeRamp, groundHeightAt, rampSurfaceNear, dropRemoved,
   buildRoutes, buildAutoRoutes, pointOnRoute, LANE_OFFSET, stepBot, fetchBotConfig,
   fetchAirportList, loadSelectedAirportName, AIRPORT_DEFAULTS, loadAirportDraft,
 } from './data.js';
 import {
   getGeometry, getMaterial, tintColor, loadCity, loadCarModel, makeEnvironment,
-  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel, buildRocketModel, loadHouseModel,
+  buildTrafficLightGroup, updateTrafficLightGroup, loadAirportModel, buildRocketModel, loadHouseModel, loadJsonHouse,
 } from './models.js';
 import { createWeather } from './weather.js';
 import { createCarLights } from './lights.js';
@@ -33,7 +33,9 @@ const zone = (useDraft ? loadZone() : null) || (await fetchSharedZone()) || defa
 const bounds = normalizeBounds(zone.bounds);
 const boundsW = bounds.w + bounds.e, boundsD = bounds.n + bounds.s;
 const boundsCX = (bounds.e - bounds.w) / 2, boundsCZ = (bounds.s - bounds.n) / 2;
-const objects = zone.objects.map(normalizeObject);
+// Eski to'rtburchak uylar (kichik uy, ikki qavatli uy, do'kon, baland bino) va GLB uylar o'yindan olib tashlangan.
+// Uylar home-json.txt dagi JSON modellardan (house_json) chiziladi. Fayli ko'rsatilmagan JSON uy tashlab yuboriladi.
+const objects = dropRemoved(zone.objects).map(normalizeObject).filter((o) => !(CATALOG[o.t].json && !o.m));
 const weatherConfig = await fetchWeather();
 
 // ---------- Renderer ----------
@@ -123,10 +125,12 @@ for (const [w, d, x, z] of [
 
 // ---------- Zona obyektlari ----------
 const byType = new Map();
-const glbHouses = [];            // home-glb.txt dagi GLB uylar (o.m = glb fayl)
+const glbHouses = [];            // GLB modellar (o.m = glb fayl)
+const jsonHouses = [];           // home-json.txt dagi JSON uylar (o.m = json fayl)
 const trafficLightEntries = [];   // { group, data } — bittalab render qilinadi, chunki har birining chirog'i alohida yonib-o'chadi
 for (const o of objects) {
   if (o.t === 'spawn' || o.t === 'route_point') continue;
+  if (CATALOG[o.t].json) { jsonHouses.push(o); continue; }   // JSON uylar pastda alohida (InstancedMesh bilan) chiziladi
   if (CATALOG[o.t].glb && o.m) { glbHouses.push(o); continue; }   // GLB uylar pastda alohida (InstancedMesh bilan) chiziladi
   if (CATALOG[o.t].kind === 'traffic_light') {
     const group = buildTrafficLightGroup(o);
@@ -584,6 +588,84 @@ function addGlbFallback(list) {
     loadHouseModel(file)
       .then((res) => addGlbHouses(file, list, res))
       .catch((err) => { console.warn('GLB uy yuklanmadi:', file, err); addGlbFallback(list); });
+  }
+}
+// ---------- JSON uylar (home-json.txt): yengil, bitta geometriya, bir xil uylar bitta chizish chaqiruvida ----------
+// Har bir JSON fayl bir marta yuklanadi. Uylar 192 m li katakchalarga bo'linadi (kamera ko'rmaganlari chizilmaydi,
+// tuman ortidagilari o'chiriladi - updateWorldChunks). To'qnashuv qutilari modelning haqiqiy devorlaridan olinadi.
+function addJsonHouses(file, list, res) {
+  list.forEach((o) => {
+    const c = colOf.get(o);
+    if (!c) return;
+    const cs = Math.cos(o.r), sn = Math.sin(o.r), top = (o.y || 0) + res.h * o.s;
+    (res.boxes && res.boxes.length ? res.boxes : [{ x: 0, z: 0, hw: res.w, hd: res.d }]).forEach((b, i) => {
+      const col = i === 0 ? c : { shape: 'box', solid: true, cone: false };
+      col.x = o.x + o.s * (b.x * cs + b.z * sn);
+      col.z = o.z + o.s * (-b.x * sn + b.z * cs);
+      col.hw = b.hw * o.s; col.hd = b.hd * o.s;
+      col.cos = cs; col.sin = sn; col.top = top;
+      const reach = Math.hypot(col.hw, col.hd) + 3;
+      col.reach2 = reach * reach;
+      if (i > 0) colliders.push(col);
+    });
+  });
+
+  if (!res.patched) { res.patched = true; weather.patch(res.mat, { snowMax: 1, sway: false }); }
+  const geo = res.geo;
+  if (!geo.boundingSphere) geo.computeBoundingSphere();
+  const gr = geo.boundingSphere ? geo.boundingSphere.radius + geo.boundingSphere.center.length() : 20;
+  const cells = new Map();
+  for (const o of list) {
+    const key = `${Math.floor(o.x / CHUNK)},${Math.floor(o.z / CHUNK)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(o);
+  }
+  for (const cell of cells.values()) {
+    const mesh = new THREE.InstancedMesh(geo, res.mat, cell.length);
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, maxS = 0, maxY = 0;
+    cell.forEach((o, i) => {
+      dummy.position.set(o.x, o.y || 0, o.z);
+      dummy.rotation.set(0, o.r, 0);
+      dummy.scale.setScalar(o.s);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      if (o.x < minX) minX = o.x;
+      if (o.x > maxX) maxX = o.x;
+      if (o.z < minZ) minZ = o.z;
+      if (o.z > maxZ) maxZ = o.z;
+      if (o.s > maxS) maxS = o.s;
+      if ((o.y || 0) > maxY) maxY = o.y || 0;
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.frustumCulled = false;   // katakcha ko'rinishi updateWorldChunks orqali boshqariladi
+    mesh.castShadow = shadowsOn;
+    mesh.receiveShadow = shadowsOn;
+    scene.add(mesh);
+    worldChunks.push({
+      mesh,
+      cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2,
+      r: Math.hypot(maxX - minX, maxZ - minZ) / 2 + gr * (maxS || 1) + maxY + 6,
+    });
+  }
+}
+{
+  const byFile = new Map();
+  for (const o of jsonHouses) {
+    if (!byFile.has(o.m)) byFile.set(o.m, []);
+    byFile.get(o.m).push(o);
+  }
+  for (const [file, list] of byFile) {
+    loadJsonHouse(file)
+      .then((res) => addJsonHouses(file, list, res))
+      .catch((err) => {
+        // Fayl topilmasa: uy chizilmaydi va ko'rinmas devor ham qolmaydi
+        console.warn('JSON uy yuklanmadi:', file, err);
+        for (const o of list) {
+          const c = colOf.get(o);
+          const i = c ? colliders.indexOf(c) : -1;
+          if (i >= 0) colliders.splice(i, 1);
+        }
+      });
   }
 }
 const ramps = objects.map(makeRamp).filter(Boolean);

@@ -5,9 +5,9 @@ import {
   loadSettings, loadZone, saveZone, defaultZone, normalizeObject, isValidZone, fetchSharedZone,
   makeFootprint, collideCircle, randomTint,
   TRAFFIC_LIGHT_COLORS, TRAFFIC_HEAD, TRAFFIC_SEC_MIN, TRAFFIC_SEC_MAX,
-  isBendable, fetchAirportList, AIRPORT_DEFAULTS, GLB_HOUSE,
+  isBendable, fetchAirportList, AIRPORT_DEFAULTS, GLB_HOUSE, dropRemoved,
 } from './data.js';
-import { getGeometry, getMaterial, loadCity, buildTrafficLightGroup, refreshTrafficLightGroup, updateTrafficLightGroup, loadAirportModel } from './models.js';
+import { getGeometry, getMaterial, loadCity, buildTrafficLightGroup, refreshTrafficLightGroup, updateTrafficLightGroup, loadAirportModel, loadJsonHouse } from './models.js';
 import { showSaveDialog } from './savefile.js';
 import { cachedFetchArrayBuffer, evictGLBCache } from './glbCache.js';
 import {
@@ -123,7 +123,7 @@ let nextId = 1;
 let selectedId = null;
 let helper = null;
 let tool = 'place';
-let currentType = 'house_small';
+let currentType = 'road_straight';
 let placeLevel = 0;          // qo'yiladigan rampaning balandligi (m)
 let placeQuarter = 0;        // qo'yiladigan uy/yo'l burilishi: 0..3 * 90°
 let placeBend = 0;           // qo'yiladigan yo'l/rampaning qayrilmasi: -1 chap, 0 to'g'ri, 1 o'ng
@@ -134,6 +134,9 @@ let dirty = false;
 // ---------- Yordamchi ----------
 const snapV = (v) => (snapSize > 0 ? Math.round(v / snapSize) * snapSize : v);
 const getEntry = (id) => entries.find((e) => e.id === id) || null;
+// Eski to'rtburchak uylar (kichik uy, ikki qavatli uy, do'kon, baland bino) va GLB uylar (house_glb) editordan olib tashlangan:
+// zona ro'yxatidan ular chiqarib tashlanadi. Uylar endi home-json.txt dagi JSON modellardan qo'yiladi (house_json).
+const dropHouseGlb = dropRemoved;
 
 let toastTimer = 0;
 function toast(text, ms = 2000) {
@@ -167,11 +170,10 @@ function updateStatus() {
   $('undo').disabled = undoStack.length === 0;
 }
 
-// ---------- GLB uylar (home-glb.txt) va GLB modellar (modellar.txt) ----------
-// home-glb.txt formati:  name: uy   va   glb: home-v2.glb   (bir nechta uy bo'lsa ketma-ket yoziladi).
-// GLB uy zonaga { t: 'house_glb', m: <glb fayl>, s: kattalik, y: balandlik (m), w/d: yarim eni/bo'yi } bo'lib saqlanadi.
-let houseList = [];            // [{ name, file }]
-let currentHouse = null;       // palitradan tanlangan GLB uy/model fayli
+// ---------- GLB modellar (modellar.txt) ----------
+// modellar.txt formati:  name: model   va   glb: model.glb   (bir nechta model bo'lsa ketma-ket yoziladi).
+// GLB model zonaga { t: 'model_glb', m: <glb fayl>, s: kattalik, y: balandlik (m), w/d: yarim eni/bo'yi } bo'lib saqlanadi.
+let currentHouse = null;       // palitradan tanlangan GLB model fayli
 let currentSolid = true;       // tanlangan model to'qnashuvli (qattiq) mi
 let modelList = [];            // modellar.txt: [{ name, file, solid }]
 let glbDragMode = 'move';      // 'move' | 'size' | 'height': barmoq bilan nimani surish
@@ -191,6 +193,24 @@ function parseHouseList(text) {
     else if (key === 'solid') { if (cur) cur.solid = !/^(no|yo.?q|false|0|off)$/i.test(val); }   // solid: yo'q  -> mashina o'tib ketadi
     else {
       if (!cur || cur.file) { cur = { name: val.replace(/\.glb$/i, ''), file: '', solid: true }; list.push(cur); }
+      cur.file = val;
+    }
+  }
+  return list.filter((h) => h.file);
+}
+// home-json.txt formati:   nom: baland bino   va   json: baland-bino.json   (bir nechta uy bo'lsa ketma-ket yoziladi).
+function parseJsonHouseList(text) {
+  const clean = String(text).split(/\r?\n/).filter((l) => !l.trim().startsWith('#')).join('\n');
+  const parts = clean.split(/\b(nom|name|json)\s*:\s*/i);
+  const list = [];
+  let cur = null;
+  for (let i = 1; i < parts.length; i += 2) {
+    const key = parts[i].toLowerCase();
+    const val = (parts[i + 1] || '').trim();
+    if (!val) continue;
+    if (key === 'nom' || key === 'name') { cur = { name: val, file: '', solid: true }; list.push(cur); }
+    else {
+      if (!cur || cur.file) { cur = { name: val.replace(/\.json$/i, '').replace(/[-_]+/g, ' '), file: '', solid: true }; list.push(cur); }
       cur.file = val;
     }
   }
@@ -229,6 +249,7 @@ function fitHouse(model) {
   return { root, w: Math.round(size.x * k * 50) / 100, d: Math.round(size.z * k * 50) / 100 };
 }
 function loadHouseModel(file) {
+  if (/\.json$/i.test(file)) return loadJsonHouse(file);   // JSON uy: yengil, GLB yuklash kerak emas
   if (!houseModels.has(file)) {
     const job = (async () => {
       const loader = await getHouseLoader();
@@ -278,7 +299,7 @@ function attachHouse(entry) {
     if (helper && selectedId === entry.id) helper.update();
     updateSelInfo();
   }).catch((err) => {
-    console.warn('GLB uy yuklanmadi:', file, err);
+    console.warn('GLB model yuklanmadi:', file, err);
     const ph = entry.mesh.userData.placeholder;
     if (ph) ph.material.color.set('#d9534f');
     toast(`Model topilmadi: ${file}`, 3500);
@@ -287,7 +308,7 @@ function attachHouse(entry) {
 
 // ---------- Obyektlar ----------
 function applyTransform(mesh, data) {
-  mesh.position.set(data.x, CATALOG[data.t].glb ? (data.y || 0) : 0, data.z);   // GLB uyning balandligi (y)
+  mesh.position.set(data.x, CATALOG[data.t].glb ? (data.y || 0) : 0, data.z);   // GLB modelning balandligi (y)
   mesh.rotation.set(0, data.r, 0);
   mesh.scale.setScalar(data.s);
 }
@@ -320,7 +341,7 @@ function refreshEntry(entry) {
   if (CATALOG[entry.data.t].kind === 'traffic_light') {
     refreshTrafficLightGroup(entry.mesh, entry.data);
   } else if (CATALOG[entry.data.t].glb) {
-    // GLB uy: faqat joyi/burilishi/kattaligi/balandligi (applyTransform) o'zgaradi
+    // GLB model: faqat joyi/burilishi/kattaligi/balandligi (applyTransform) o'zgaradi
   } else {
     entry.mesh.geometry = getGeometry(entry.data.t, entry.data.y || 0, entry.data.bend || 0);   // rampa balandligi/burilishi o'zgarganda
     entry.mesh.material = getMaterial(CATALOG[entry.data.t].kind, entry.data.c);
@@ -332,7 +353,7 @@ function refreshEntry(entry) {
 function replaceAll(list) {
   selectEntry(null);
   for (const e of entries.slice()) removeEntry(e);
-  for (const o of list) addEntry(normalizeObject(o));
+  for (const o of dropHouseGlb(list)) addEntry(normalizeObject(o));
 }
 
 // Bekor qilish
@@ -381,9 +402,9 @@ function updateSelInfo() {
     : 'Obyektni tanlash uchun unga bosing. Tanlangach barmoq bilan surib qo‘ying.';
   $('selActions').querySelectorAll('button').forEach((b) => { b.disabled = !entry; });
   const setDisabled = (act, off) => { const b = $('selActions').querySelector(`[data-act="${act}"]`); if (b) b.disabled = off; };
-  setDisabled('hUp', !isRamp && !isGlb);            // balandlik faqat rampalar va GLB uylar uchun
+  setDisabled('hUp', !isRamp && !isGlb);            // balandlik faqat rampalar va GLB modellar uchun
   setDisabled('hDown', !isRamp && !isGlb);
-  setDisabled('tint', isGlb);                       // GLB uyning o'z ranglari bor
+  setDisabled('tint', isGlb);                       // GLB modelning o'z ranglari bor
   setDisabled('smaller', !entry || isRamp);         // rampa kattalashtirilmaydi (nishab buzilmasin)
   setDisabled('bigger', !entry || isRamp);
   setDisabled('bend', !isBend);                     // qayrilma faqat to'g'ri yo'l/rampa uchun
@@ -437,7 +458,7 @@ function placeAt(x, z) {
   const def = CATALOG[currentType];
   const isTree = def.kind === 'tree';
   const isNature = isTree || def.kind === 'mountain';
-  if (def.glb && !currentHouse) { toast('Avval ro‘yxatdan GLB model yoki uyni tanlang'); return; }
+  if (def.glb && !currentHouse) { toast('Avval ro‘yxatdan GLB modelni tanlang'); return; }
   pushUndo();
   if (currentType === 'spawn') {
     const old = entries.find((e) => e.data.t === 'spawn');
@@ -449,7 +470,7 @@ function placeAt(x, z) {
     z: clampZ(snapV(z)),
     r: isNature ? Math.random() * Math.PI * 2 : (placeQuarter * Math.PI) / 2,
     s: isTree ? 0.85 + Math.random() * 0.5 : (def.kind === 'mountain' ? 0.85 + Math.random() * 0.4 : 1),
-    c: currentType === 'billboard' ? 0 : randomTint(currentType),
+    c: currentType === 'billboard' || def.glb ? 0 : randomTint(currentType),
     y: placeLevel,
     bend: isBendable(currentType) ? placeBend : 0,
     ...(def.glb ? { m: currentHouse, ...(currentType === 'model_glb' && !currentSolid ? { k: 0 } : {}) } : {}),
@@ -460,7 +481,8 @@ function placeAt(x, z) {
 // Palitra
 const SWATCH = { house: '#e9dcc3', tree: '#3b8a58', road: '#3a3f47', billboard: '#4b7bec', ramp: '#59606b', mountain: '#7b8570', ridge: '#658f4b', land: '#d9c48f', route: '#ff5252', spawn: '#ffc933', traffic_light: '#22262e' };
 const palette = $('palette');
-let glbSlot = null, modelSlot = null;
+let modelSlot = null;
+let jsonSlot = null;
 for (const group of GROUPS) {
   const label = document.createElement('span');
   label.className = 'group-label';
@@ -468,7 +490,7 @@ for (const group of GROUPS) {
   palette.append(label);
   for (const [type, def] of Object.entries(CATALOG)) {
     if (def.group !== group) continue;
-    if (def.glb) continue;   // GLB uylar home-glb.txt dan alohida chip bo'lib qo'shiladi
+    if (def.glb || def.legacy) continue;   // GLB modellar modellar.txt dan, JSON uylar home-json.txt dan alohida chip bo'lib qo'shiladi; eski uylar olib tashlangan
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chip';
@@ -481,13 +503,13 @@ for (const group of GROUPS) {
     btn.addEventListener('click', () => { currentType = type; markActiveChip(); updatePlaceBendUI(); });
     palette.append(btn);
   }
-  if (group === 'Uylar') { glbSlot = document.createElement('span'); glbSlot.style.display = 'contents'; palette.append(glbSlot); }
   if (group === 'Modellar') { modelSlot = document.createElement('span'); modelSlot.style.display = 'contents'; palette.append(modelSlot); }
+  if (group === 'Uylar') { jsonSlot = document.createElement('span'); jsonSlot.style.display = 'contents'; palette.append(jsonSlot); }
 }
 function markActiveChip() {
   palette.querySelectorAll('.chip').forEach((c) => c.classList.toggle('is-active', c.dataset.glb ? (currentType === c.dataset.type && c.dataset.glb === currentHouse) : c.dataset.type === currentType));
 }
-// home-glb.txt dagi uylarni va modellar.txt dagi modellarni palitraga qo'shish
+// modellar.txt dagi modellarni palitraga qo'shish
 function addGlbChips(slot, list, type, suffix) {
   if (!slot) return;
   slot.textContent = '';
@@ -512,13 +534,7 @@ function addGlbChips(slot, list, type, suffix) {
   }
   markActiveChip();
 }
-const addHouseChips = () => addGlbChips(glbSlot, houseList, 'house_glb', ' (GLB)');
 const addModelChips = () => addGlbChips(modelSlot, modelList, 'model_glb', '');
-fetch('home-glb.txt', { cache: 'no-store' })
-  .then((r) => (r.ok ? r.text() : ''))
-  .then((t) => { houseList = parseHouseList(t); })
-  .catch(() => { houseList = []; })
-  .then(() => addHouseChips());
 fetch('modellar.txt', { cache: 'no-store' })
   .then((r) => (r.ok ? r.text() : ''))
   .then((t) => { modelList = parseHouseList(t); })
@@ -530,6 +546,22 @@ fetch('modellar.txt', { cache: 'no-store' })
       hint.className = 'hint';
       hint.textContent = 'modellar.txt topilmadi yoki bo‘sh';
       modelSlot.append(hint);
+    }
+  });
+// home-json.txt dagi JSON uylarni palitraga qo'shish
+let jsonHouseList = [];
+const addJsonHouseChips = () => addGlbChips(jsonSlot, jsonHouseList, 'house_json', '');
+fetch('home-json.txt', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.text() : ''))
+  .then((t) => { jsonHouseList = parseJsonHouseList(t); })
+  .catch(() => { jsonHouseList = []; })
+  .then(() => {
+    addJsonHouseChips();
+    if (!jsonHouseList.length && jsonSlot) {
+      const hint = document.createElement('span');
+      hint.className = 'hint';
+      hint.textContent = 'home-json.txt topilmadi yoki bo‘sh';
+      jsonSlot.append(hint);
     }
   });
 markActiveChip();
@@ -1651,11 +1683,11 @@ $('selActions').addEventListener('click', (ev) => {
   }
 });
 
-// ---------- GLB uy paneli: kattalik va balandlik (slayder, ±, barmoq bilan tortish) ----------
+// ---------- GLB model paneli: kattalik va balandlik (slayder, ±, barmoq bilan tortish) ----------
 const GLB_MODE_HINT = {
-  move: 'Uyni barmoq bilan bosib ushlab suring. Kattalik va balandlik uchun slayder yoki tugmalardan foydalaning.',
-  size: 'Ekranning istalgan joyidan barmoqni yuqoriga tortsangiz uy kattalashadi, pastga tortsangiz kichrayadi.',
-  height: 'Ekranning istalgan joyidan barmoqni yuqoriga tortsangiz uy ko‘tariladi, pastga tortsangiz tushadi.',
+  move: 'Modelni barmoq bilan bosib ushlab suring. Kattalik va balandlik uchun slayder yoki tugmalardan foydalaning.',
+  size: 'Ekranning istalgan joyidan barmoqni yuqoriga tortsangiz model kattalashadi, pastga tortsangiz kichrayadi.',
+  height: 'Ekranning istalgan joyidan barmoqni yuqoriga tortsangiz model ko‘tariladi, pastga tortsangiz tushadi.',
 };
 let glbSliderPushed = false;
 function updateGlbPanel(entry, isGlb) {
@@ -1744,7 +1776,7 @@ canvas.addEventListener('pointerdown', (ev) => {
     const l = entry.data.lights[i];
     gesture.lightDrag = { i, startDx: l.dx, startDy: l.dy, pushed: false };
   } else if (tool === 'select' && entry && CATALOG[entry.data.t].glb && glbDragMode !== 'move') {
-    // GLB uy: ekranning istalgan joyidan yuqoriga/pastga tortib kattalik yoki balandlikni o'zgartirish
+    // GLB model: ekranning istalgan joyidan yuqoriga/pastga tortib kattalik yoki balandlikni o'zgartirish
     gesture.adjust = { mode: glbDragMode, s0: entry.data.s, y0: entry.data.y || 0, pushed: false };
   } else if (tool === 'select' && selectedId != null && pickEntryId(ev) === selectedId) {
     const gp = groundPoint(ev);
@@ -1953,10 +1985,16 @@ $('pull').addEventListener('click', async () => {
 const startZone = loadZone() || (await fetchSharedZone()) || defaultZone();
 setBounds(startZone.bounds);
 homeView();
-for (const o of startZone.objects) addEntry(normalizeObject(o));
+const startObjects = dropHouseGlb(startZone.objects);
+const removedHouses = startZone.objects.length - startObjects.length;   // zonadagi eski to'rtburchak va GLB uylar soni (olib tashlanadi)
+for (const o of startObjects) addEntry(normalizeObject(o));
 loadAir(startZone.air);
 updateStatus();
 updateSelInfo();
+if (removedHouses > 0) {
+  scheduleSave();   // eski uylarsiz zonani qurilmaga saqlaymiz; so'ng "Saqlash" bilan yangi zone.json ni GitHub'ga yuklang
+  toast(`${removedHouses} ta eski uy olib tashlandi. Uylarni home-json.txt dagi ro‘yxatdan qo‘ying, so‘ng “Saqlash” ni bosib zone.json ni yangilang`, 7000);
+}
 
 renderer.setAnimationLoop((now) => {
   controls.update();

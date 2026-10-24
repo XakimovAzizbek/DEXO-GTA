@@ -1,0 +1,7 @@
+# JSON uylar ro'yxati. Har bir uy: nom (palitrada ko'rinadigan nom) va json (fayl nomi).
+# Fayl editor.html bilan bir papkada (yoki home/, houses/, json/, assets/ ichida) turadi.
+
+nom: baland bino
+json: baland-bino.json
+
+nom: 

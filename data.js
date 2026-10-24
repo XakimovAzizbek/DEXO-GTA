@@ -307,10 +307,13 @@ export function saveSelectedCarName(name) {
 
 // ---------- Katalog ----------
 export const CATALOG = {
-  house_small:   { label: 'Kichik uy',         group: 'Uylar',     kind: 'house', hw: 4,  hd: 4 },
-  house_two:     { label: 'Ikki qavatli uy',   group: 'Uylar',     kind: 'house', hw: 5,  hd: 4.5 },
-  shop:          { label: 'Do‘kon',            group: 'Uylar',     kind: 'house', hw: 6,  hd: 4.5 },
-  tower:         { label: 'Baland bino',       group: 'Uylar',     kind: 'house', hw: 7,  hd: 7 },
+  // Eski to'rtburchak uylar: palitradan olib tashlangan, zonadan ham chiqarib tashlanadi (dropRemoved).
+  // Turlar faqat eski zone.json fayllari yiqilmasligi uchun katalogda qoldirilgan.
+  house_small:   { label: 'Kichik uy',         group: 'Uylar',     kind: 'house', hw: 4,  hd: 4,   legacy: true },
+  house_two:     { label: 'Ikki qavatli uy',   group: 'Uylar',     kind: 'house', hw: 5,  hd: 4.5, legacy: true },
+  shop:          { label: 'Do‘kon',            group: 'Uylar',     kind: 'house', hw: 6,  hd: 4.5, legacy: true },
+  tower:         { label: 'Baland bino',       group: 'Uylar',     kind: 'house', hw: 7,  hd: 7,   legacy: true },
+  house_json:    { label: 'JSON uy',           group: 'Uylar',     kind: 'house', hw: 5,  hd: 5, glb: true, json: true },   // home-json.txt dagi JSON uy (fayl: o.m, masalan baland-bino.json)
   house_glb:     { label: 'GLB uy',            group: 'Uylar',     kind: 'house', hw: 5,  hd: 5, glb: true },   // home-glb.txt dagi GLB uy (model fayli: o.m)
   model_glb:     { label: 'GLB model',         group: 'Modellar',  kind: 'house', hw: 5,  hd: 5, glb: true },   // modellar.txt dagi GLB model (fayl: o.m, k: 0 bo'lsa to'qnashuvsiz)
   tree_pine:     { label: 'Archa',             group: 'Daraxtlar', kind: 'tree',  r: 0.6 },
@@ -351,6 +354,14 @@ export const TINTS = {
 };
 export function randomTint(type, rnd = Math.random) {
   return Math.floor(rnd() * TINTS[CATALOG[type].kind].length);
+}
+
+// Eski (to'rtburchak) va GLB uylarni zona ro'yxatidan chiqarib tashlaydi. JSON uylar (house_json) qoladi.
+export function isRemovedType(t) {
+  return t === 'house_glb' || !!(CATALOG[t] && CATALOG[t].legacy);
+}
+export function dropRemoved(list) {
+  return (Array.isArray(list) ? list : []).filter((o) => o && !isRemovedType(o.t));
 }
 
 export function hasType(t) {
@@ -965,25 +976,7 @@ export function defaultZone() {
     add('road_straight', -d, 0, Math.PI / 2);
   }
 
-  const kinds = ['house_small', 'house_two', 'shop', 'house_small', 'house_two'];
-  for (let k = 0; k < 5; k++) {
-    const t = kinds[k], hd = CATALOG[t].hd;
-    const z = 24 + k * 18;
-    for (const sz of [1, -1]) {
-      add(t, 9 + hd, sz * z, -Math.PI / 2);
-      add(kinds[(k + 2) % 5], -(9 + CATALOG[kinds[(k + 2) % 5]].hd), sz * z, Math.PI / 2);
-    }
-  }
-  for (let k = 0; k < 4; k++) {
-    const t = kinds[(k + 1) % 5], hd = CATALOG[t].hd;
-    const x = 44 + k * 18;
-    for (const sx of [1, -1]) {
-      add(t, sx * x, 9 + hd, Math.PI);
-      add(t, sx * (x + 9), -(9 + hd), 0);
-    }
-  }
-  add('tower', 46, 46);
-  add('tower', -46, -46);
+  // Uylar endi home-json.txt dagi JSON modellardan editorda qo'yiladi: namuna zonada uy yo'q.
 
   const feet = list.map(makeFootprint).filter(Boolean);
   let tries = 0, planted = 0;

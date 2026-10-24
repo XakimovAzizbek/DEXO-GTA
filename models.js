@@ -827,8 +827,166 @@ function houseFootprint(root, halfW, halfD, H) {
   });
 }
 
+
+// ---------- JSON uylar (home-json.txt; zonada { t: 'house_json', m: 'baland-bino.json' }) ----------
+// GLB dan ancha yengil: uy oddiy shakllardan (quti, silindr, konus, shar, tom) yig'iladi va BITTA geometriyaga
+// birlashtiriladi (vertex ranglar bilan). O'yinda bir xil uylar InstancedMesh bilan bitta chizish chaqiruvida chiziladi.
+//
+// JSON formati (o'lchamlar METRDA, s = 1 da shu o'lchamda ko'rinadi; pastki qismi o'zi yerga, markazi (0,0) ga qo'yiladi):
+// {
+//   "name": "Baland bino",
+//   "parts": [
+//     { "t": "box",    "p": [x, y, z], "s": [eni, balandligi, bo'yi], "c": "#7f8fa3" },
+//     { "t": "cyl",    "p": [x, y, z], "r": yuqori radius, "rb": pastki radius (ixtiyoriy), "h": balandlik, "seg": 14, "c": "#..." },
+//     { "t": "cone",   "p": [x, y, z], "r": radius, "h": balandlik, "seg": 14, "c": "#..." },
+//     { "t": "sphere", "p": [x, y, z], "r": radius, "s": [sx, sy, sz] (ixtiyoriy), "c": "#..." },
+//     { "t": "hip",    "p": [x, y, z], "s": [eni, balandligi, bo'yi], "c": "#..." },     // to'rt qiyali tom (piramida)
+//     { "t": "gable",  "p": [x, y, z], "s": [eni, balandligi, bo'yi], "c": "#..." }      // ikki qiyali tom (tizma z o'qi bo'ylab)
+//   ],
+//   "hit": [[x, z, yarimEni, yarimBo'yi]]   // ixtiyoriy: to'qnashuv qutilari (bo'lmasa o'zi devorlardan hisoblanadi)
+// }
+// Har bir qismda: "p" - qismning MARKAZI; "ry" / "rx" / "rz" - burish (gradus);
+// "rep": { "n": [nx, ny, nz], "d": [dx, dy, dz] } - qismni to'r qilib ko'paytiradi (oynalar qatori, ustunlar uchun; p atrofida markazlanadi).
+const JSON_MAX_PARTS = 6000;
+const jsonNum = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : d);
+const jsonVec3 = (v, d) => (Array.isArray(v) ? [jsonNum(v[0], d[0]), jsonNum(v[1], d[1]), jsonNum(v[2], d[2])] : d.slice());
+
+function gableGeometry(w, h, d) {
+  const x = w / 2, z = d / 2, y0 = -h / 2, y1 = h / 2;
+  const A = [-x, y0, z], B = [x, y0, z], C = [0, y1, z], D = [-x, y0, -z], E = [x, y0, -z], F = [0, y1, -z];
+  const tris = [A, B, C,  E, D, F,  A, C, F,  A, F, D,  B, E, F,  B, F, C];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+function jsonPartGeometry(P) {
+  const S = Array.isArray(P.s) ? jsonVec3(P.s, [1, 1, 1]) : [jsonNum(P.s, 1), jsonNum(P.s, 1), jsonNum(P.s, 1)];
+  const seg = Math.max(3, Math.min(32, Math.round(jsonNum(P.seg, 14))));
+  switch (String(P.t).toLowerCase()) {
+    case 'box': return new THREE.BoxGeometry(Math.max(0.01, S[0]), Math.max(0.01, S[1]), Math.max(0.01, S[2]));
+    case 'cyl': {
+      const r = Math.max(0, jsonNum(P.r, 1));
+      return new THREE.CylinderGeometry(r, Math.max(0, jsonNum(P.rb, r)), Math.max(0.01, jsonNum(P.h, 1)), seg);
+    }
+    case 'cone': return new THREE.ConeGeometry(Math.max(0.01, jsonNum(P.r, 1)), Math.max(0.01, jsonNum(P.h, 1)), seg);
+    case 'sphere': {
+      const g = new THREE.SphereGeometry(Math.max(0.01, jsonNum(P.r, 1)), 12, 8);
+      if (Array.isArray(P.s)) g.scale(S[0], S[1], S[2]);
+      return g;
+    }
+    case 'hip': {
+      const g = new THREE.ConeGeometry(1, Math.max(0.01, S[1]), 4, 1);
+      g.rotateY(Math.PI / 4);
+      g.scale(Math.max(0.01, S[0]) / 2 / 0.70710678, 1, Math.max(0.01, S[2]) / 2 / 0.70710678);
+      return g;
+    }
+    case 'gable': return gableGeometry(Math.max(0.01, S[0]), Math.max(0.01, S[1]), Math.max(0.01, S[2]));
+    default: return null;
+  }
+}
+
+// JSON tavsifidan uy yasaydi. Natija: { root, geo, mat, w, d, h, boxes } (w/d - yarim eni/bo'yi, h - balandligi, s = 1 da).
+export function buildJsonHouse(spec) {
+  const list = Array.isArray(spec) ? spec : (spec && Array.isArray(spec.parts) ? spec.parts : []);
+  if (!list.length) throw new Error('JSON uyda "parts" ro‘yxati bo‘sh');
+  const geos = [];
+  const rects = [];   // har bir qismning gorizontal izi (to'qnashuv qutilari uchun)
+  const mtx = new THREE.Matrix4(), quat = new THREE.Quaternion(), eul = new THREE.Euler(0, 0, 0, 'YXZ'), one = new THREE.Vector3(1, 1, 1), pos = new THREE.Vector3();
+  const D2R = Math.PI / 180;
+  for (const P of list) {
+    if (!P || typeof P !== 'object') continue;
+    const base = jsonPartGeometry(P);
+    if (!base) continue;
+    base.deleteAttribute('uv');
+    const p = jsonVec3(P.p, [0, 0, 0]);
+    const n = jsonVec3(P.rep && P.rep.n, [1, 1, 1]).map((v) => Math.max(1, Math.min(60, Math.round(v))));
+    const dd = jsonVec3(P.rep && P.rep.d, [0, 0, 0]);
+    eul.set(jsonNum(P.rx, 0) * D2R, jsonNum(P.ry, 0) * D2R, jsonNum(P.rz, 0) * D2R, 'YXZ');
+    quat.setFromEuler(eul);
+    const hex = typeof P.c === 'string' ? P.c : '#c8c8c8';
+    for (let i = 0; i < n[0]; i++) for (let j = 0; j < n[1]; j++) for (let k = 0; k < n[2]; k++) {
+      if (geos.length >= JSON_MAX_PARTS) break;
+      pos.set(p[0] + (i - (n[0] - 1) / 2) * dd[0], p[1] + (j - (n[1] - 1) / 2) * dd[1], p[2] + (k - (n[2] - 1) / 2) * dd[2]);
+      mtx.compose(pos, quat, one);
+      const g = base.clone().applyMatrix4(mtx);
+      g.computeBoundingBox();
+      rects.push(g.boundingBox.clone());
+      geos.push(paint(g, hex));
+    }
+    base.dispose();
+  }
+  if (!geos.length) throw new Error('JSON uyda yaroqli qism topilmadi');
+  const geo = finish(geos);
+  // Pastki qismi y = 0 da, markazi (0,0) da bo'lsin
+  const bb = geo.boundingBox;
+  const ox = -(bb.min.x + bb.max.x) / 2, oy = -bb.min.y, oz = -(bb.min.z + bb.max.z) / 2;
+  geo.translate(ox, oy, oz);
+  geo.computeBoundingBox();
+  geo.computeBoundingSphere();
+  const w = (geo.boundingBox.max.x - geo.boundingBox.min.x) / 2, d = (geo.boundingBox.max.z - geo.boundingBox.min.z) / 2;
+  const h = geo.boundingBox.max.y - geo.boundingBox.min.y;
+
+  // To'qnashuv qutilari
+  let boxes = [];
+  if (spec && Array.isArray(spec.hit) && spec.hit.length) {
+    for (const r of spec.hit) {
+      if (!Array.isArray(r) || r.length < 4) continue;
+      boxes.push({ x: jsonNum(r[0], 0) + ox, z: jsonNum(r[1], 0) + oz, hw: Math.max(0.1, Math.abs(jsonNum(r[2], 1))), hd: Math.max(0.1, Math.abs(jsonNum(r[3], 1))) });
+    }
+  } else {
+    const seen = new Set();
+    for (const b of rects) {
+      const y0 = b.min.y + oy, y1 = b.max.y + oy;
+      if (y1 < 0.5 || y0 > 3.0) continue;                       // yer, tom, yuqori qavat - hisobga olinmaydi
+      const bw = b.max.x - b.min.x, bd = b.max.z - b.min.z;
+      if (Math.min(bw, bd) < 0.6 || Math.max(bw, bd) < 1.2) continue;   // ingichka oyna, eshik romi, quvur - devor emas
+      const r = {
+        x: Math.round(((b.min.x + b.max.x) / 2 + ox) * 100) / 100, z: Math.round(((b.min.z + b.max.z) / 2 + oz) * 100) / 100,
+        hw: Math.round(bw * 50) / 100, hd: Math.round(bd * 50) / 100,
+      };
+      const key = `${r.x},${r.z},${r.hw},${r.hd}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      boxes.push(r);
+    }
+  }
+  if (!boxes.length || boxes.length > 24) boxes = [{ x: 0, z: 0, hw: w, hd: d }];   // juda ko'p bo'lak: bitta umumiy quti
+
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const mesh = new THREE.Mesh(geo, mat);
+  const root = new THREE.Group();
+  root.add(mesh);
+  return { root, geo, mat, w: Math.round(w * 100) / 100, d: Math.round(d * 100) / 100, h, boxes };
+}
+
+const jsonHouseCache = new Map();
+// home-json.txt dagi fayl nomi bo'yicha JSON uyni yuklab, yasaydi (har bir fayl bir marta yuklanadi).
+export function loadJsonHouse(file) {
+  if (!jsonHouseCache.has(file)) {
+    const job = (async () => {
+      const names = file.includes('/') ? [file] : [file, `home/${file}`, `houses/${file}`, `json/${file}`, `assets/${file}`, `models/${file}`];
+      let lastErr = null;
+      for (const path of names) {
+        try {
+          const r = await fetch(path, { cache: 'no-cache' });
+          if (!r.ok) throw new Error(`${path}: ${r.status}`);
+          const spec = JSON.parse(await r.text());
+          return buildJsonHouse(spec);
+        } catch (err) { lastErr = err; }
+      }
+      throw lastErr || new Error('JSON fayl topilmadi');
+    })();
+    jsonHouseCache.set(file, job);
+    job.catch(() => jsonHouseCache.delete(file));
+  }
+  return jsonHouseCache.get(file);
+}
+
 const houseModelCache = new Map();
 export function loadHouseModel(file) {
+  if (/\.json$/i.test(file)) return loadJsonHouse(file);   // JSON uy (home-json.txt)
   if (!houseModelCache.has(file)) {
     const job = (async () => {
       const loader = await makeGLTFLoader();
